@@ -1,0 +1,20 @@
+cmake_minimum_required(VERSION 3.20)
+project(Forge VERSION 0.1.0 LANGUAGES CXX)
+
+add_library(forge_core src/scheduler.cpp)
+target_include_directories(forge_core PUBLIC include)
+target_compile_features(forge_core PUBLIC cxx_std_20)
+set_target_properties(forge_core PROPERTIES CXX_EXTENSIONS OFF)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(forge_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+
+add_executable(forge src/cli.cpp)
+target_link_libraries(forge PRIVATE forge_core)
+
+include(CTest)
+if(BUILD_TESTING)
+  add_executable(scheduler_tests tests/scheduler_tests.cpp)
+  target_link_libraries(scheduler_tests PRIVATE forge_core)
+  add_test(NAME scheduler COMMAND scheduler_tests)
+endif()

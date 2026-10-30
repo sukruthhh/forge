@@ -1,0 +1,83 @@
+ok so, for the context of a new chat where im gonna ask to start forge, give me the exact rundown right now as to what this projects quality will be (the latest YC esque framework you gave me). Make sure to preserve that info in a new chat when i ask to start forge
+Yes. I’ve preserved the latest Forge target, including the YC-esque product framing, 3-day sprint scope, technical architecture, CLI experience, heterogeneous scheduling angle, benchmark requirements, and the exact resume role it should play.
+
+The canonical version is:
+
+Forge is a local-first, self-hosted distributed compute runtime that turns heterogeneous computers you already own into one private programmable batch-compute cluster.
+
+It should feel like a real developer product, not a university scheduler assignment. The product pitch is:
+
+“Turn every computer you own into one private compute cluster.”
+
+The core UX should eventually be as simple as:
+
+forge join
+forge cluster
+forge run ./benchmark --cpu 4
+forge map inputs/*.json -- python analyze.py {}
+forge ps
+forge logs <job>
+
+Behind that, Forge should handle:
+
+worker registration and capability advertisement
+heterogeneous x86/ARM and CPU/GPU-aware scheduling
+custom TCP coordinator/worker communication
+remote process execution
+Linux isolation with namespaces
+CPU/RAM enforcement through cgroups v2
+heartbeats
+failure detection
+automatic rescheduling
+result/log aggregation
+round-robin, least-loaded, and resource-aware scheduling
+real benchmarking across physical machines
+The key differentiator is personal heterogeneous compute, not TensorFlow. Your desktop, laptop, and M3 Mac should eventually feel like one compute pool; if a workload needs CUDA, Forge routes it to the RTX 4070 machine, while generic CPU jobs can go to whichever compatible worker is least loaded.
+
+For the first 3 days, the goal is to get as much of that real product loop working as possible:
+
+Day 1: CLI, coordinator, worker, TCP, registration, heartbeats, capability advertisement, remote execution, returned stdout/stderr.
+
+Day 2: multiple workers, scheduling, failure handling, automatic reassignment, forge cluster, forge ps, forge logs, and especially forge map.
+
+Day 3: freeze features and generate proof—real workloads, 1 vs 2 vs 3 workers, throughput, completion time, p50/p95 latency, utilization, failure-detection time, recovery time, and a polished README/demo.
+
+The quality bar is:
+
+real distributed system + polished CLI + heterogeneous physical hardware + measurable performance + eventually external users
+
+not “stuff as many technologies as possible into the repo.” That aligns with the framework we already defined, where the jump from a student project to something YC-shaped comes from a sharp wedge, simple developer experience, real metrics, and actual use. 
+
+On your resume, Forge should eventually become the star project:
+
+Forge: systems / infrastructure / Linux / distributed compute
+Zelta: backend / databases / caching / deployment
+SimUOttawa: C++ / rendering / performance
+uOttaHack: removed once Forge is real enough
+And the target reaction remains:
+
+“Why did a first/second-year student build this?”
+
+When you open the new chat, just say:
+
+Start Forge.
+
+I’ll use this exact framework as the target and begin from Day 1 rather than redefining the project again.
+
+dont worry about the 3 day time frame, cant I enable computer use?
+Yes — and for Forge, that changes the workflow quite a bit.
+
+If you switch to Work mode / Computer Use, I can do more than just tell you what files to create. I can work through the build directly: inspect the repo, create/edit files, run commands, compile, test, diagnose errors, and iterate on the implementation.
+
+For Forge specifically, the ideal setup would be:
+
+You: open the Forge repo/environment and give me access through Work/Computer Use.
+Me: implement the coordinator/worker/CLI, run builds/tests, inspect failures, benchmark pieces, and keep the architecture aligned with the YC-level target.
+You: stay involved in architecture decisions and make sure you understand the important systems concepts so you can defend the project in interviews.
+The important limitation is that Computer Use doesn’t magically give me access to all three of your physical machines. For the distributed part, we’d still need to configure the desktop, laptop, and Mac as Forge nodes. But using Work/Computer Use should make building the codebase much faster and more autonomous than me giving you snippets and having you paste everything manually.
+
+So when you start the new Forge chat, I’d recommend doing it in Work mode rather than a normal chat. Then say:
+
+Start Forge. Use the canonical YC-level Forge design we planned. Build it directly in my environment, but keep me informed of major architecture decisions and make sure the code remains interview-defensible.
+
+That is probably the best way to attack Forge now that you’re no longer constraining it to three days.
