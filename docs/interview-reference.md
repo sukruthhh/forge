@@ -1,0 +1,388 @@
+# Forge interview reference
+
+Updated: October 31, 2026
+
+Implementation baseline: registration/liveness milestone (October 31)
+
+Stack: **C++20 | Linux | TCP/IP | CMake**
+
+This is a living reference, not a claim that the entire product is complete.
+Update the status and evidence sections after each milestone. Design proposals
+below describe intended behavior until backed by implementation and tests.
+
+## 1. The explanation to lead with
+
+**One sentence:** Forge is a local-first, self-hosted distributed batch-compute
+runtime intended to turn heterogeneous computers you already own into one private
+programmable compute cluster.
+
+**Product pitch:** Turn every computer you own into one private compute cluster.
+
+**Thirty-second answer, accurate today:**
+
+> I'm building Forge in C++20 to distribute independent batch jobs across personal
+> machines. The goal is a simple CLI backed by a coordinator that matches jobs to
+> compatible workers and recovers eligible jobs after worker failure. So far I've
+> established the CMake build and implemented and tested the resource-aware
+> placement core, then added a Linux loopback TCP coordinator, worker registration,
+> heartbeats, and cluster inspection. Remote execution and recovery are next.
+
+**Longer explanation:** The target user owns several machines with different
+resources but otherwise submits work to each machine manually. Forge should make
+batch processing one workflow: submit inputs, match compatible hardware, reserve
+resources, execute work, collect results, and inspect failures. Good initial
+workloads include independent simulations, parameter sweeps, and data processing.
+The project does not make a single arbitrary application automatically parallel.
+
+**Why build it?** Personal heterogeneous compute is the product wedge. The
+engineering learning goal is to connect networking, scheduling, process lifecycle,
+resource control, and failure semantics in a usable system. Explain your own
+motivation in your own words rather than presenting this document as a script.
+
+## 2. What exists versus what is planned
+
+| Capability | Current evidence |
+|---|---|
+| C++20 library and CLI built with CMake | Compiled in an Ubuntu 24.04 development container using GCC 13.3 and Ninja |
+| CLI | `--help`, `--version`, `coordinator`, `join --id NAME`, `cluster`; version `0.1.0-dev` |
+| Worker/job resource data models | `include/forge/scheduler.hpp` |
+| Compatibility and free-resource checks | `src/scheduler.cpp`, covered by scheduler tests |
+| Resource-aware placement heuristic | Implemented and tested, including deterministic ties |
+| Test runner | Scheduler, protocol, and real TCP/subprocess integration suites; see validation record below |
+| GitHub Actions | Workflow configured; its remote execution has not been verified in this reference |
+| Coordinator, worker agents, TCP protocol | Implemented for registration/liveness/inspection on loopback; no execution |
+| Automatic capability detection | Worker reports Linux architecture and system CPU/RAM totals; no cgroup adjustment or GPU discovery |
+| Round-robin and least-loaded policies | Planned; only the resource-aware heuristic exists |
+| Remote execution, file transfer, batch map, logs | Planned |
+| Heartbeats | Implemented with READY/SUSPECT/DEAD inspection and session deadlines |
+| Retries and attempt tracking | Planned |
+| Namespaces and cgroups v2 | Planned |
+| Native macOS workers and CUDA placement | Planned; current matching only checks a supplied CUDA boolean |
+| Physical-machine benchmarks and external users | No results or user evidence yet |
+
+**Validation record, October 31:** GCC 13.3 Linux Debug build succeeded in the
+Ubuntu development container. CTest passed 3/3 suites (scheduler, protocol, TCP
+integration), with total runtime about 8.2 seconds. Integration included 120
+cluster queries using eight concurrent client threads. These are correctness
+checks, not throughput or latency benchmarks. Remote GitHub Actions results
+remain unverified here.
+
+Do not describe CUDA flags as GPU discovery, resource checks as enforced limits,
+or a container test as a benchmark across physical machines. The live registry
+is not yet wired into scheduler reservations or execution.
+
+## 3. Intended user experience
+
+`join` and `cluster` exist for loopback registration/inspection. Other commands
+below remain the target interface. Current join requires `--id NAME`:
+
+```sh
+forge join
+forge cluster
+forge run ./benchmark --cpu 4
+forge map inputs/*.json -- python analyze.py {}
+forge ps
+forge logs <job>
+```
+
+`run` submits one job; `map` creates independent jobs from a collection of inputs.
+The CLI syntax and packaging rules still need implementation decisions. For
+example, an executable built for Linux x86_64 cannot simply run on macOS ARM64.
+An interpreter-based workload also needs compatible interpreters and dependencies.
+
+## 4. Architecture and ownership
+
+Intended path:
+
+```text
+CLI -> coordinator -> compatible worker -> child process
+          ^                  |
+          +-- status, output, completion --+
+```
+
+- **CLI:** submits requests and presents cluster, job, and log information.
+- **Coordinator:** owns the queue, worker registry, reservations, assignments,
+  job/attempt state, and scheduling decisions.
+- **Worker:** reports capabilities and liveness; manages child processes, output,
+  cancellation, and eventual resource enforcement.
+- **Scheduler core:** pure eligibility and placement functions. It does not open
+  sockets, launch processes, persist state, or reserve resources itself.
+- **Execution backend:** platform-specific process and isolation operations.
+
+Start with one coordinator to keep ownership and failure behavior understandable.
+It is a single point of failure. Worker-failure recovery does not imply coordinator
+restart recovery; durable state and reconciliation are separate future work.
+
+Keep the scheduler portable while targeting Linux execution first. A future
+macOS backend needs different process/resource controls. Docker currently supplies
+development tools on the Windows host; it is not Forge's implemented job sandbox.
+
+## 5. The implemented scheduler: explain this precisely
+
+Each worker has an ID, OS, architecture, CPU/RAM capacity, CPU/RAM reservations,
+CUDA capability flag, and readiness flag. Each job specifies optional OS and
+architecture constraints, CPU/RAM requirements, and whether CUDA is required.
+
+### Eligibility
+
+Reject a placement if:
+
+1. Requested CPU is zero.
+2. The worker is unavailable.
+3. A specified OS or architecture does not match.
+4. CUDA is required but absent.
+5. Existing reservations exceed advertised capacity.
+6. Requested CPU or RAM exceeds the remaining capacity.
+
+Empty OS/architecture constraints currently mean unrestricted matching. Correct
+job submission must eventually derive or validate constraints for the artifact.
+Memory request zero currently means no RAM reservation, not unlimited enforced
+memory. Those are model semantics, not a completed execution policy.
+
+Capacity is checked before subtraction to avoid unsigned underflow. Fit is checked
+before adding requests to reservations, preventing overflow in the projected
+resource totals. Worker CPU capacity zero cannot pass a positive CPU request.
+
+### Placement score
+
+For every eligible worker:
+
+```text
+projected CPU fraction = (reserved CPU + requested CPU) / CPU capacity
+projected RAM fraction = (reserved RAM + requested RAM) / RAM capacity
+score = max(projected CPU fraction, projected RAM fraction)
+```
+
+Choose the lowest score; break equal scores by lexicographically smaller worker
+ID. If RAM capacity and requested/reserved RAM are all zero, its RAM fraction is
+defined as zero. No eligible worker produces an empty optional, not a crash.
+
+**Example:** A job needs 4 CPU units and 8 GiB. An idle 8-CPU/16-GiB worker scores
+0.5; an idle 16-CPU/32-GiB worker scores 0.25. Choose the larger worker if both meet
+the compatibility constraints.
+
+**Complexity:** O(W) worker visits and O(1) auxiliary space for each selection,
+aside from temporary rejection messages. String comparisons depend on string
+length. Avoid claiming constant-time scheduling or a measured throughput figure.
+
+**Tradeoffs:** Simple and testable, but it does not predict runtime, account for
+CPU model differences, data locality, GPU memory, fairness, or starvation. Stable
+tie-breaking can favor the same ID. This is a projected utilization heuristic,
+not dominant-resource fairness and not a proof of globally optimal scheduling.
+
+**Critical boundary:** Selection does not mutate workers. A future coordinator
+must serialize selection and reservation, or protect both with appropriate
+synchronization, so concurrent submissions cannot oversubscribe the same capacity.
+
+## 6. Networking questions to prepare for
+
+The application protocol is implemented with Linux sockets and poll-based I/O
+deadlines, without Boost.Asio. TCP offers an ordered byte stream, not application messages.
+A receive can contain part of a message or multiple messages. A successful send
+does not prove that a worker executed the job or persisted the assignment.
+
+The protocol has versioning, explicit lengths, maximum frame sizes, message
+validation, partial-read/write handling, and absolute monotonic I/O deadlines.
+Version 1 uses binary length-prefixed fields rather than the earlier JSON proposal.
+See [the exact wire format](protocol.md). Registry access uses a mutex and handler
+threads have fixed slots. No networking occurs while holding the registry lock.
+Input/output transfers need their own limits and backpressure so one slow client
+or noisy process cannot consume unbounded memory.
+
+**Why TCP?** It provides a useful reliable stream abstraction while leaving the
+application's framing, state transitions, and failure behavior explicit.
+
+**Why C++?** Direct integration with OS APIs and explicit resource lifetime control
+fit the systems focus. RAII can own sockets, descriptors, and child-process
+resources. C++ also requires careful lifetime and concurrency management; choosing
+it alone does not demonstrate lower latency or greater reliability.
+
+**Why CMake?** It describes targets and dependencies and integrates the build with
+CTest. Ninja is a build executor; GCC is the compiler. These are different roles.
+
+## 7. Failure detection implemented; job recovery planned
+
+Workers send heartbeats about every 500 ms. Snapshot inspection marks one second
+without contact SUSPECT and two seconds DEAD; disconnects also mark DEAD. The
+registered session has a two-second receive deadline. This is inspection/session
+cleanup, not a rescheduling loop. Duplicate connected IDs are rejected; a closed
+session's ID can reconnect. There is no automatic worker reconnect yet.
+
+Proposed job states: queued, assigned, running, succeeded, failed, cancelled.
+Each retry should be a distinct execution attempt with its own ID. Final state
+names, transitions, and persistence rules still require implementation.
+
+Heartbeats provide evidence of recent contact. A missed heartbeat may indicate a
+network partition or overload rather than process death. Use monotonic elapsed
+time for local timeouts and distinguish suspicion from declaring a worker lost.
+Shorter timeouts detect some failures sooner but increase false suspicions.
+
+When a worker is lost, eligible jobs may be requeued with a bounded retry budget.
+The coordinator must reject late results from superseded attempts and release
+reservations exactly once for the accepted transition. Late or duplicate messages
+must not double-release resources or overwrite a newer result.
+
+**Does this guarantee exactly-once execution?** No. A partitioned worker may keep
+running while another attempt starts. Attempt IDs protect coordinator bookkeeping
+but cannot undo repeated external side effects. Initially target retry-safe jobs;
+external writes need idempotency or stronger application-level coordination.
+
+**Does a failed command always get retried?** That policy is undecided. Separate
+infrastructure loss from a deterministic application error. Infinite retries would
+hide bugs and waste resources. Cancellation must also prevent queued retries and
+eventually terminate the relevant child process tree.
+
+## 8. Execution, isolation, and security: planned
+
+Workers need an explicit argument vector, working directory, environment policy,
+input staging, stdout/stderr collection, exit status, and output publication.
+Avoid implicitly interpreting arbitrary commands through a shell. Drain stdout
+and stderr without allowing full pipes to deadlock the child. Bound stored output
+and define truncation or streaming behavior.
+
+Namespaces isolate selected views of system resources; cgroups v2 account for and
+control resources such as CPU and RAM. CPU bandwidth limits are not identical to
+CPU affinity. Scheduling reservations alone enforce neither. Child descendants
+must be included in lifecycle and resource management.
+
+Neither feature by itself establishes a complete hostile-code sandbox. Initial
+scope is trusted workloads on a private cluster. Authenticate submissions and
+worker membership before exposing remote command execution beyond localhost;
+define transport protection and credential handling before wider deployment.
+No authentication or encryption implementation exists yet.
+
+Packaging needs size limits, path traversal protection, explicit dependencies,
+and compatible artifacts. A CUDA flag alone is not proof of driver/runtime
+compatibility, sufficient VRAM, or exclusive GPU availability.
+
+## 9. Testing and evidence
+
+Verified foundation checks cover compatible placement, OS/architecture mismatch,
+CPU/RAM reservations, invalid reservations, CUDA requirements, unavailable workers,
+projected-utilization preference, stable ties, zero CPU, oversized RAM requests,
+and an empty cluster. This is unit-level scheduler coverage, separate from the TCP
+integration coverage. The tests use explicit checks that remain active in release
+builds rather than relying on C++ `assert`.
+
+The networking milestone adds protocol boundary/round-trip checks and real Linux
+subprocess/TCP integration checks: two workers, continued heartbeats, duplicate
+IDs, fragmented/coalesced messages, malformed framing, partial-header deadlines,
+concurrent inspection/handler reuse, worker death, ID reuse, and shutdown.
+This remains local-container evidence, not a physical network or job-recovery demo.
+
+Future execution validation should cover disconnects during dispatch,
+concurrent reservations, child-process errors, large output, stale completions,
+job recovery after worker loss, retry exhaustion, cancellation, and coordinator restart
+once persistence is implemented. Fault injection should produce reproducible
+results and verify invariants, not just a visually convincing demo.
+
+### Benchmark plan; no results yet
+
+Use identical workloads and report one-, two-, and three-physical-worker runs.
+Record hardware, OS, compiler/build mode, input size, job count, repetitions,
+resource requests, and whether staging/startup time is included.
+
+| Metric | Definition |
+|---|---|
+| Batch completion time | Elapsed time from a declared submission boundary to all required results |
+| Throughput | Completed jobs divided by measured elapsed seconds |
+| Dispatch latency | Time from enqueue to a defined dispatch/assignment event |
+| End-to-end job latency | Submission to terminal result; distinct from dispatch latency |
+| p50/p95 | Median/95th percentile of the stated latency samples |
+| Speedup | Single-worker completion time divided by multi-worker completion time |
+| Completion-time reduction | `(T_single - T_multi) / T_single * 100%` |
+| Failure detection | Controlled failure to coordinator's loss declaration |
+| Recovery | Controlled failure to a defined event: reassignment or recovered completion; label which |
+| Recovery success | Successfully recovered eligible jobs divided by eligible interrupted jobs |
+
+Reservations are not measured CPU utilization. Cross-machine timestamp subtraction
+needs clock synchronization or a measurement design avoiding clock-offset error.
+Do not confuse three containers on one computer with three physical machines.
+Heterogeneous machines need meaningful baselines; dividing speedup by worker count
+does not establish fair efficiency when workers have different capacities.
+
+Expect overhead from dispatch, transfers, startup, and collection. Very short jobs
+may scale poorly. Report repeated measurements and variation. Poor scaling is a
+finding to investigate, not a reason to manufacture stronger numbers.
+
+## 10. Likely interview questions: short answers
+
+**What is the hardest completed part so far?** Discuss either resource-accounting
+edge cases or TCP framing, deadlines, and session ownership. Do not cite automatic
+job recovery as completed yet.
+
+**Why not Kubernetes or a large distributed framework?** Forge targets a narrower
+personal batch-compute workflow and makes scheduling/execution behavior explicit
+for learning and usability. It does not currently match mature orchestration
+systems in availability, ecosystem, or security capabilities.
+
+**What happens when nothing fits?** The scheduler returns no placement. The future
+coordinator must decide whether to queue, reject an impossible request, or time
+out; those user-facing policies do not exist yet.
+
+**What is least loaded?** The definition must be explicit: reservation fractions,
+active job count, and observed CPU use are different signals. Current scheduling
+uses projected CPU/RAM reservation fractions, not sampled OS load.
+
+**Why not Raft immediately?** Replication introduces another state machine and
+failure model. First establish correct single-coordinator behavior and measure
+the need. The availability limitation remains explicit.
+
+**What would you improve next?** A complete, tested path from submission through
+assignment and execution to returned output; then multiworker behavior and
+failure semantics. Optimize bottlenecks after measuring them.
+
+**How did you use AI?** Be direct: AI assisted implementation, documentation, and
+iteration. Explain what you reviewed, tested, changed, and can demonstrate yourself.
+Do not claim independent authorship of generated code. Before presenting a module,
+be able to walk through its control flow, invariants, tradeoffs, and failure cases.
+
+**What is the biggest limitation today?** Registration and liveness work only on
+loopback. No remote job execution, authentication, or physical-cluster measurements
+exist yet. The roadmap is larger than the code.
+
+## 11. Resume targets: future XYZ bullets
+
+Use only after implementation and recorded measurements. Replace every placeholder.
+
+- Reduced batch completion time by **[X%]** across **[N] physical machines** by
+  building a C++ distributed runtime with resource-aware scheduling and parallel
+  job execution.
+- Recovered **[X%] of eligible interrupted jobs within [Y seconds]** across **[N]
+  failure trials** by implementing heartbeats, failure detection, and automatic
+  reassignment. State whether Y measures reassignment or recovered completion.
+- Achieved **[X jobs/sec] with [Y ms] p95 dispatch latency** on **[specified workload
+  and cluster]** by implementing a custom TCP coordinator-worker protocol and
+  asynchronous dispatch, once those features exist and their effect is supported.
+
+Do not attribute an improvement to a feature without a relevant baseline. Keep
+benchmark commands, raw results, and configuration with the eventual claims.
+
+## 12. Before every interview
+
+1. Refresh this document against the exact commit you plan to demonstrate.
+2. Practice the thirty-second explanation and one detailed scheduler walkthrough.
+3. Identify one real bug, its cause, the fix, and the test that prevents recurrence.
+   No bug story has been recorded yet; do not invent one.
+4. Prepare an actual demo with a fallback recording once distributed execution works.
+5. Bring measured results and limitations; keep planned capabilities in future tense.
+
+### Code and source map
+
+- [Canonical framework](canonical-framework.md)
+- [Original planning transcript](canonical-framework-source.txt)
+- [Architecture decisions](architecture.md)
+- [Scheduler model/API](../include/forge/scheduler.hpp)
+- [Scheduler implementation](../src/scheduler.cpp)
+- [Scheduler tests](../tests/scheduler_tests.cpp)
+- [CLI](../src/cli.cpp)
+- [Build configuration](../CMakeLists.txt)
+- [CI configuration](../.github/workflows/ci.yml)
+- [Wire protocol and session limits](protocol.md)
+- [Networking implementation](../src/network.cpp)
+- [Coordinator and worker sessions](../src/runtime.cpp)
+- [TCP integration checks](../tests/network_integration.py)
+
+Maintenance rule: when code changes, update implemented status, design decisions,
+validation evidence, limitations, and the short pitch together. The canonical
+framework remains the product target; this reference tracks defensible claims.

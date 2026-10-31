@@ -30,3 +30,17 @@ enforcement; cgroups v2 will provide enforcement later.
   using attempt identity.
 
 These decisions will be explained as their implementations are introduced.
+
+## 003: Bounded Linux TCP sessions before remote execution
+
+Use Linux sockets, poll-based I/O deadlines, RAII descriptor ownership, and a
+versioned length-prefixed field protocol. This keeps dependencies small and makes
+partial I/O and message boundaries explicit. Binary fields replace the earlier
+JSON proposal; [protocol.md](protocol.md) specifies the exact layout.
+
+A bounded set of connection-handler threads owns sockets. A mutex protects the
+in-memory registry; network I/O happens outside its critical sections. This
+intentionally simple design supports the initial personal-cluster scale without
+claiming event-loop performance. Loopback binding limits the milestone until
+authentication and execution policy are implemented. Heartbeat state inspection
+exists; job recovery and the scheduler/registry integration do not yet exist.
