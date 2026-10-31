@@ -10,7 +10,7 @@ heterogeneous machines. Stack: **C++20 | Linux | TCP/IP | CMake**.
 Current milestone: resource-aware placement, a bounded/versioned TCP protocol,
 coordinator, worker registration, heartbeats, and cluster inspection on Linux
 loopback. Includes scheduler/protocol tests, TCP integration tests, and Linux CI.
-Remote process execution is not implemented yet. No physical-cluster benchmark
+Remote process execution not implemented yet. No physical-cluster benchmark
 results exist. See [protocol details and limits](docs/protocol.md).
 
 See [the canonical framework](docs/canonical-framework.md) and
