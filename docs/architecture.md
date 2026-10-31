@@ -43,4 +43,14 @@ in-memory registry; network I/O happens outside its critical sections. This
 intentionally simple design supports the initial personal-cluster scale without
 claiming event-loop performance. Loopback binding limits the milestone until
 authentication and execution policy are implemented. Heartbeat state inspection
-exists; job recovery and the scheduler/registry integration do not yet exist.
+exists. The execution milestone now integrates scheduler reservations; automatic
+job recovery is still future work.
+
+## 004: Single-job workers and synchronous submission first
+
+`forge run` waits for a result. The registry lock covers placement and reservation;
+each worker runs one job while a separate execution task allows heartbeats to
+continue. Explicit argv, posix_spawnp, dual output pipes, bounded capture, process
+groups, and a runtime deadline define the first execution backend. Worker loss
+fails a job without retries. There is no durable history or file staging yet.
+See [execution.md](execution.md) for wire messages, lifecycle, and limitations.

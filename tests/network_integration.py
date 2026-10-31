@@ -120,6 +120,9 @@ try:
         b"\x00\x00\x00\x07\x01\x03\x00\x00\x00\x00x",  # trailing byte
         b"\x00\x00\x00\x0a\x01\x01\x00\x00\x00\x01\x00\x00\x00\x05",  # truncated field
         frame(1, ["bad", "linux", "x86_64", "0", "4096", "0"]),
+        frame(7),  # incomplete submission
+        frame(7, ["-1", "0", "1", "linux", "x86_64", "/bin/true"]),
+        frame(7, ["1", "0", "31", "linux", "x86_64", "/bin/true"]),
     ):
         sock = connect()
         sock.sendall(malformed)

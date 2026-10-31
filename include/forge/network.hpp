@@ -21,7 +21,8 @@ private:
 };
 
 enum class Type : std::uint8_t { register_worker = 1, heartbeat = 2, cluster = 3,
-                                ok = 4, snapshot = 5, error = 6 };
+                                ok = 4, snapshot = 5, error = 6,
+                                submit = 7, assignment = 8, result = 9 };
 struct Message {
     Type type;
     std::vector<std::string> fields;

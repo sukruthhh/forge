@@ -1,0 +1,91 @@
+# First end-to-end execution milestone
+
+## Usage
+
+Start the coordinator and worker in separate terminals in the same Linux environment:
+
+```sh
+./build/forge coordinator
+./build/forge join --id desktop
+./build/forge run --cpu 1 --memory 0 --timeout 5 -- /usr/bin/printf 'hello from Forge\n'
+```
+
+`run` waits for completion and returns the command's exit status. Output streams
+are separate; CLI diagnostics (job ID, exit, truncation, timeout) go to stderr.
+Options precede `--`; subsequent tokens form argv, not an implicitly interpreted
+shell command. `--memory` is bytes. A shell can be invoked explicitly if needed.
+
+## Placement and state
+
+SUBMIT creates a process-local `job-N` ID. The CLI requests Linux and its own
+architecture; GPU requests/architecture overrides are not exposed yet. The
+existing resource-aware scheduler chooses a connected, recently heard-from, idle
+compatible worker. The registry mutex covers selection AND reservation, so
+concurrent clients cannot reserve the same slot. Each worker holds one job, even
+if CPU remains unused. CPU/RAM reservations are not enforced OS limits.
+
+Jobs transition QUEUED -> ASSIGNED -> RUNNING -> FINISHED. RUNNING means assignment
+is being delivered, not that exec succeeded. FINISHED carries a command result or
+infrastructure failure. There is no start acknowledgment, durable history, or
+attempt/retry state machine. Map iteration follows lexicographic job ID order;
+queue fairness/FIFO is not guaranteed.
+
+Worker heartbeats receive assignments. A separate asynchronous execution task
+allows heartbeats to continue. Results must match the RUNNING job on that session.
+Completion or session loss releases its reservation once. Unexpected/duplicate
+results reject the session rather than overwriting accepted output.
+
+At most 128 submissions are retained, also subject to the coordinator's 96 total
+connection-handler limit. Unplaced jobs fail after five seconds. Submissions,
+heartbeats, results, and disconnects trigger scheduling. The assignment-to-result
+deadline is runtime plus five seconds, checked on worker messages; a session
+without messages times out independently. Runtime is 1..30 seconds. The CLI
+allows 45 seconds for its response. Results remain only until sent to the waiting
+client; a disconnected client does not automatically cancel an accepted job.
+`ps`, `logs`, later result lookup, batch mapping, and retries are not implemented.
+
+## Execution lifecycle
+
+`posix_spawnp` uses explicit argv, the worker's PATH, inherited environment, and
+working directory. Commands, dependencies, and inputs must already be installed
+there; no file upload exists. Stdin is `/dev/null`. Close-on-exec pipes capture
+stdout/stderr, drained without blocking. Each stream retains at most 16384 bytes;
+excess is discarded and reported, so output fits the 64-KiB frame limit and noisy
+children cannot deadlock on full pipes. This is collected output, not streaming.
+
+A new process group contains the child and ordinary descendants. A monotonic
+deadline covers both execution and output pipes held open by descendants. Timeout
+kills the group and returns 124 plus a timeout flag. Signal termination returns
+128+signal; launch errors return 127. Application exit codes can overlap these
+conventions. Cleanup kills remaining group descendants before reaping the child.
+waitid with WNOWAIT observes exit while retaining the leader PID until group
+cleanup, avoiding a PID-reuse race during cleanup.
+Graceful worker shutdown or detected coordinator disconnection cancels execution.
+
+SIGKILL or machine failure cannot run cleanup: a worker's child may survive. This
+is one reason worker-loss retries are not enabled. Processes deliberately escaping
+the group are outside this trusted-workload scope. Cgroups will provide stronger
+process-tree lifecycle control later.
+
+No authentication, environment filtering, namespaces, or cgroups exist yet.
+Loopback is a development restriction, not authentication: local users able to
+connect can submit commands as the worker's user. Do not expose the listener
+remotely. Capability totals do not yet account for container resource limits.
+
+## Protocol extensions
+
+Framing in [protocol.md](protocol.md) is unchanged. New v1 message IDs:
+
+| ID | Name | Fields |
+|---|---|---|
+| 7 | SUBMIT | CPU decimal, RAM bytes decimal, timeout seconds, OS, architecture, 1..128 argv strings |
+| 8 | ASSIGNMENT | Job ID, timeout seconds, argv strings |
+| 9 | RESULT | Job ID, exit 0..255, stdout bytes, stderr bytes, timeout `0`/`1`, truncation `0`/`1` |
+
+CPU is 1..1048576; RAM is uint64 including zero; timeout is 1..30. OS must be Linux;
+architecture uses the label validator. Executable must be nonempty and argv cannot
+contain NUL. Zero memory means no RAM reservation, not enforced unlimited usage.
+
+SUBMIT is the first client message and receives RESULT or ERROR. HEARTBEAT can
+receive OK or ASSIGNMENT. Worker RESULT receives OK; the next heartbeat may fetch
+another assignment. Session loss yields ERROR to the waiting client, without retry.

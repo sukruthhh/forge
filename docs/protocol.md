@@ -1,7 +1,8 @@
 # TCP protocol v1: registration and liveness
 
-Implemented on Linux, loopback only. No authentication, encryption, job submission,
-or process execution. This milestone does not permit access from another machine.
+Implemented on Linux, loopback only. No authentication or encryption. Job submission
+and process execution are described in [execution.md](execution.md), which extends
+this registration/liveness protocol with message IDs 7..9.
 
 ## Encoding
 
@@ -18,7 +19,7 @@ repeated fields:
 ```
 
 Fields are binary-safe at the framing layer. Schema validation applies separately.
-Unknown versions/types, excess fields, trailing bytes, truncated fields, and
+Unknown versions/types (outside 1..9), excess fields, trailing bytes, truncated fields, and
 out-of-range lengths are errors. Reads/writes handle fragmentation and coalescing.
 Each receive shares one absolute monotonic deadline across header and body;
 receiving a few bytes does not reset it. Sending suppresses SIGPIPE and uses a
@@ -43,15 +44,15 @@ affinity yet. Claimed resources are not enforced or authenticated.
 
 ## Sessions and bounds
 
-A client must register or request a snapshot within three seconds. Registration
+A client must register, submit a job, or request a snapshot within three seconds. Registration
 receives OK. The worker sends a heartbeat approximately every 500 ms and waits for
-OK before sending the next. A registered session has a two-second receive deadline.
+OK (or an assignment) before sending the next. A registered session has a two-second receive deadline.
 Any unexpected message is rejected. There is no automatic reconnect loop yet.
 
 Snapshot states use elapsed time since registration or the last valid heartbeat:
 READY below one second, SUSPECT from one to two seconds, DEAD at two seconds or
 after session disconnect. Status is calculated when inspecting the registry;
-there is no scheduling/recovery loop yet. Disconnect cleanup marks the record
+heartbeats also drive scheduling, but no automatic job recovery exists. Disconnect cleanup marks the record
 disconnected. Duplicate connected IDs are rejected even if their heartbeat has
 expired until the old handler closes, preventing stale cleanup from corrupting
 the replacement. Disconnected IDs may reconnect.
@@ -61,8 +62,8 @@ handler slots are reused and joined; extra connections are closed. The registry
 retains at most 64 distinct worker IDs for the coordinator's lifetime, including
 dead records. Reuse an old ID or restart to clear that developmental limit.
 Snapshots fit within frame/field bounds at this limit. Registry operations use a
-mutex; no network I/O occurs while holding it. There is no job execution state
-or integration with resource reservation yet.
+mutex; no network I/O occurs while holding it. Job execution state and reservation
+ownership are described in the execution document.
 
 SIGINT/SIGTERM set a lock-free stop flag. The accept loop checks it periodically;
 handlers finish or time out and are joined before registry destruction. Registry

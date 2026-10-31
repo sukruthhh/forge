@@ -8,10 +8,10 @@ heterogeneous machines. Stack: **C++20 | Linux | TCP/IP | CMake**.
 ## Current status
 
 Current milestone: resource-aware placement, a bounded/versioned TCP protocol,
-coordinator, worker registration, heartbeats, and cluster inspection on Linux
-loopback. Includes scheduler/protocol tests, TCP integration tests, and Linux CI.
-Remote process execution not implemented yet. No physical-cluster benchmark
-results exist. See [protocol details and limits](docs/protocol.md).
+coordinator, worker registration, heartbeats, cluster inspection, and scheduled
+command execution on Linux loopback. Includes scheduler/protocol tests, TCP and
+execution integration tests, and Linux CI. No physical-cluster benchmark results
+exist. See [protocol details](docs/protocol.md) and [execution limits](docs/execution.md).
 
 See [the canonical framework](docs/canonical-framework.md) and
 [architecture decisions](docs/architecture.md).
@@ -51,9 +51,15 @@ running development container):
 ./build/forge coordinator --port 9000
 ./build/forge join --id desktop --port 9000
 ./build/forge cluster --port 9000
+./build/forge run --port 9000 --timeout 5 -- /usr/bin/printf 'hello from Forge\n'
 ```
 
 Stop a worker and inspect the cluster again to see its DEAD record. Connections
 are restricted to `127.0.0.1`; these commands do not join physical remote machines
 yet. The worker currently reports system CPU/RAM totals without accounting for
 container limits and advertises CUDA as unavailable.
+
+`run` executes trusted commands already installed on a worker. Captured output is
+limited to 16 KiB per stream, and runtime to 30 seconds. CPU/RAM reservations are
+not OS-enforced limits. Authentication, file staging, sandboxing, batch mapping,
+job history, and automatic retries are not implemented yet.

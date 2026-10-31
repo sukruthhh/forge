@@ -2,7 +2,7 @@
 
 Updated: October 31, 2026
 
-Implementation baseline: registration/liveness milestone (October 31)
+Implementation baseline: first end-to-end execution milestone (October 31)
 
 Stack: **C++20 | Linux | TCP/IP | CMake**
 
@@ -25,7 +25,9 @@ programmable compute cluster.
 > compatible workers and recovers eligible jobs after worker failure. So far I've
 > established the CMake build and implemented and tested the resource-aware
 > placement core, then added a Linux loopback TCP coordinator, worker registration,
-> heartbeats, and cluster inspection. Remote execution and recovery are next.
+> heartbeats, and cluster inspection. The first execution path now schedules
+> explicit commands on workers, collects output and exit status, and handles
+> runtime limits and worker loss. Cross-machine execution and retries are next.
 
 **Longer explanation:** The target user owns several machines with different
 resources but otherwise submits work to each machine manually. Forge should make
@@ -44,16 +46,17 @@ motivation in your own words rather than presenting this document as a script.
 | Capability | Current evidence |
 |---|---|
 | C++20 library and CLI built with CMake | Compiled in an Ubuntu 24.04 development container using GCC 13.3 and Ninja |
-| CLI | `--help`, `--version`, `coordinator`, `join --id NAME`, `cluster`; version `0.1.0-dev` |
+| CLI | `--help`, `--version`, `coordinator`, `join --id NAME`, `cluster`, `run`; version `0.1.0-dev` |
 | Worker/job resource data models | `include/forge/scheduler.hpp` |
 | Compatibility and free-resource checks | `src/scheduler.cpp`, covered by scheduler tests |
 | Resource-aware placement heuristic | Implemented and tested, including deterministic ties |
 | Test runner | Scheduler, protocol, and real TCP/subprocess integration suites; see validation record below |
 | GitHub Actions | Workflow configured; its remote execution has not been verified in this reference |
-| Coordinator, worker agents, TCP protocol | Implemented for registration/liveness/inspection on loopback; no execution |
+| Coordinator, worker agents, TCP protocol | Registration, liveness, inspection, submission, assignment, and results on loopback |
 | Automatic capability detection | Worker reports Linux architecture and system CPU/RAM totals; no cgroup adjustment or GPU discovery |
 | Round-robin and least-loaded policies | Planned; only the resource-aware heuristic exists |
-| Remote execution, file transfer, batch map, logs | Planned |
+| Worker process execution | Implemented: explicit argv, output/exit capture, runtime/output bounds, one job per worker |
+| File transfer, batch map, persistent logs/history | Planned |
 | Heartbeats | Implemented with READY/SUSPECT/DEAD inspection and session deadlines |
 | Retries and attempt tracking | Planned |
 | Namespaces and cgroups v2 | Planned |
@@ -61,20 +64,25 @@ motivation in your own words rather than presenting this document as a script.
 | Physical-machine benchmarks and external users | No results or user evidence yet |
 
 **Validation record, October 31:** GCC 13.3 Linux Debug build succeeded in the
-Ubuntu development container. CTest passed 3/3 suites (scheduler, protocol, TCP
-integration), with total runtime about 8.2 seconds. Integration included 120
-cluster queries using eight concurrent client threads. These are correctness
-checks, not throughput or latency benchmarks. Remote GitHub Actions results
-remain unverified here.
+Ubuntu development container. The initial execution run passed 4/4 CTest suites
+(scheduler, protocol, TCP integration, execution integration), taking about 28.7
+seconds in total. The final build after PID-safe process cleanup passed all four
+suites in about 32.1 seconds, including the added descendant-pipe timeout and
+two-worker placement checks.
+Network integration includes 120 cluster queries using eight concurrent clients.
+These are correctness checks, not throughput or latency benchmarks. Remote
+GitHub Actions results remain unverified here.
 
 Do not describe CUDA flags as GPU discovery, resource checks as enforced limits,
 or a container test as a benchmark across physical machines. The live registry
-is not yet wired into scheduler reservations or execution.
+is now wired into scheduler reservations and execution. Reservations remain
+placement accounting, not kernel resource enforcement.
 
 ## 3. Intended user experience
 
-`join` and `cluster` exist for loopback registration/inspection. Other commands
-below remain the target interface. Current join requires `--id NAME`:
+`join`, `cluster`, and `run` exist for loopback operation. Other commands below
+remain the target interface. Current join requires `--id NAME`, and run requires
+options before `--` followed by command arguments:
 
 ```sh
 forge join
@@ -84,6 +92,9 @@ forge map inputs/*.json -- python analyze.py {}
 forge ps
 forge logs <job>
 ```
+
+Current runnable example: `forge run --timeout 5 -- /usr/bin/printf hello`.
+Files and dependencies must already exist on the worker; no upload is performed.
 
 `run` submits one job; `map` creates independent jobs from a collection of inputs.
 The CLI syntax and packaging rules still need implementation decisions. For
@@ -170,9 +181,9 @@ CPU model differences, data locality, GPU memory, fairness, or starvation. Stabl
 tie-breaking can favor the same ID. This is a projected utilization heuristic,
 not dominant-resource fairness and not a proof of globally optimal scheduling.
 
-**Critical boundary:** Selection does not mutate workers. A future coordinator
-must serialize selection and reservation, or protect both with appropriate
-synchronization, so concurrent submissions cannot oversubscribe the same capacity.
+**Critical boundary:** Selection does not mutate workers. The coordinator now
+holds the registry mutex across selection and reservation. It admits one job per
+worker; completion or session loss releases the reservation once.
 
 ## 6. Networking questions to prepare for
 
@@ -208,16 +219,17 @@ registered session has a two-second receive deadline. This is inspection/session
 cleanup, not a rescheduling loop. Duplicate connected IDs are rejected; a closed
 session's ID can reconnect. There is no automatic worker reconnect yet.
 
-Proposed job states: queued, assigned, running, succeeded, failed, cancelled.
-Each retry should be a distinct execution attempt with its own ID. Final state
-names, transitions, and persistence rules still require implementation.
+Current states are QUEUED, ASSIGNED, RUNNING, FINISHED. A terminal response carries
+exit status or an infrastructure error. RUNNING means assignment is being sent,
+not an acknowledged successful exec. There are no retries, attempt IDs, durable
+history, or cancellation API yet. Worker loss fails the job without reassignment.
 
 Heartbeats provide evidence of recent contact. A missed heartbeat may indicate a
 network partition or overload rather than process death. Use monotonic elapsed
 time for local timeouts and distinguish suspicion from declaring a worker lost.
 Shorter timeouts detect some failures sooner but increase false suspicions.
 
-When a worker is lost, eligible jobs may be requeued with a bounded retry budget.
+In the future, eligible lost-worker jobs may be requeued with a bounded retry budget.
 The coordinator must reject late results from superseded attempts and release
 reservations exactly once for the accepted transition. Late or duplicate messages
 must not double-release resources or overwrite a newer result.
@@ -227,18 +239,25 @@ running while another attempt starts. Attempt IDs protect coordinator bookkeepin
 but cannot undo repeated external side effects. Initially target retry-safe jobs;
 external writes need idempotency or stronger application-level coordination.
 
-**Does a failed command always get retried?** That policy is undecided. Separate
+**Does a failed command always get retried?** No retries exist yet. Future policy must separate
 infrastructure loss from a deterministic application error. Infinite retries would
 hide bugs and waste resources. Cancellation must also prevent queued retries and
 eventually terminate the relevant child process tree.
 
-## 8. Execution, isolation, and security: planned
+## 8. Execution implemented; isolation and security planned
 
-Workers need an explicit argument vector, working directory, environment policy,
-input staging, stdout/stderr collection, exit status, and output publication.
-Avoid implicitly interpreting arbitrary commands through a shell. Drain stdout
-and stderr without allowing full pipes to deadlock the child. Bound stored output
-and define truncation or streaming behavior.
+Workers launch explicit argv using posix_spawnp, inheriting the worker's environment
+and working directory. Stdin is /dev/null. Separate nonblocking-drained pipes
+capture stdout/stderr, retaining 16 KiB per stream while discarding excess output
+to avoid deadlock. Timeout is 1..30 seconds; it kills the process group and returns
+124. Spawn errors return 127; signals return 128+signal. An explicit timeout flag
+distinguishes timeout from a program choosing the same exit code. Heartbeats run
+while execution proceeds on a separate asynchronous task. See [execution.md](execution.md).
+
+No file staging, environment filtering, user-selected working directory, or live
+log streaming exists yet. Graceful worker cleanup kills group descendants, but
+SIGKILL cannot run cleanup and children may survive. Processes deliberately
+escaping their group are outside the trusted-workload scope.
 
 Namespaces isolate selected views of system resources; cgroups v2 account for and
 control resources such as CPU and RAM. CPU bandwidth limits are not identical to
@@ -270,8 +289,13 @@ IDs, fragmented/coalesced messages, malformed framing, partial-header deadlines,
 concurrent inspection/handler reuse, worker death, ID reuse, and shutdown.
 This remains local-container evidence, not a physical network or job-recovery demo.
 
-Future execution validation should cover disconnects during dispatch,
-concurrent reservations, child-process errors, large output, stale completions,
+Execution integration checks literal shell syntax/argument boundaries, separate
+output streams, nonzero exits, spawn failure, large and binary output, live
+heartbeats during a job, runtime and descendant-pipe deadlines, serial reservation
+ownership, impossible resource requests, concurrent placement on two different
+worker PIDs, worker loss, and replacement capacity.
+
+Future execution validation should cover disconnects during dispatch, stale completions,
 job recovery after worker loss, retry exhaustion, cancellation, and coordinator restart
 once persistence is implemented. Fault injection should produce reproducible
 results and verify invariants, not just a visually convincing demo.
@@ -316,9 +340,10 @@ personal batch-compute workflow and makes scheduling/execution behavior explicit
 for learning and usability. It does not currently match mature orchestration
 systems in availability, ecosystem, or security capabilities.
 
-**What happens when nothing fits?** The scheduler returns no placement. The future
-coordinator must decide whether to queue, reject an impossible request, or time
-out; those user-facing policies do not exist yet.
+**What happens when nothing fits?** The scheduler returns no placement. The
+coordinator queues the job for up to five seconds, then returns an error if no
+placement becomes available. It does not distinguish permanently impossible
+requests from temporarily unavailable capacity yet.
 
 **What is least loaded?** The definition must be explicit: reservation fractions,
 active job count, and observed CPU use are different signals. Current scheduling
@@ -328,18 +353,18 @@ uses projected CPU/RAM reservation fractions, not sampled OS load.
 failure model. First establish correct single-coordinator behavior and measure
 the need. The availability limitation remains explicit.
 
-**What would you improve next?** A complete, tested path from submission through
-assignment and execution to returned output; then multiworker behavior and
-failure semantics. Optimize bottlenecks after measuring them.
+**What would you improve next?** Persistent job inspection/logs, input staging,
+batch mapping, authenticated cross-machine connections, and explicit retry
+semantics. Prioritize these against real workloads and measured bottlenecks.
 
 **How did you use AI?** Be direct: AI assisted implementation, documentation, and
 iteration. Explain what you reviewed, tested, changed, and can demonstrate yourself.
 Do not claim independent authorship of generated code. Before presenting a module,
 be able to walk through its control flow, invariants, tradeoffs, and failure cases.
 
-**What is the biggest limitation today?** Registration and liveness work only on
-loopback. No remote job execution, authentication, or physical-cluster measurements
-exist yet. The roadmap is larger than the code.
+**What is the biggest limitation today?** Execution works between local worker
+processes on loopback, with preinstalled programs/files. There is no authenticated
+physical cluster, upload, sandboxing, automatic recovery, or real scaling evidence.
 
 ## 11. Resume targets: future XYZ bullets
 
@@ -382,6 +407,9 @@ benchmark commands, raw results, and configuration with the eventual claims.
 - [Networking implementation](../src/network.cpp)
 - [Coordinator and worker sessions](../src/runtime.cpp)
 - [TCP integration checks](../tests/network_integration.py)
+- [Execution lifecycle and protocol](execution.md)
+- [Process execution backend](../src/executor.cpp)
+- [Execution integration checks](../tests/execution_integration.py)
 
 Maintenance rule: when code changes, update implemented status, design decisions,
 validation evidence, limitations, and the short pitch together. The canonical
