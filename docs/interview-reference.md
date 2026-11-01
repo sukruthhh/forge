@@ -1,8 +1,8 @@
 # Forge interview reference
 
-Updated: October 31, 2026
+Updated: November 1, 2026
 
-Implementation baseline: first end-to-end execution milestone (October 31)
+Implementation baseline: bounded job inspection and retained logs (November 1)
 
 Stack: **C++20 | Linux | TCP/IP | CMake**
 
@@ -46,7 +46,7 @@ motivation in your own words rather than presenting this document as a script.
 | Capability | Current evidence |
 |---|---|
 | C++20 library and CLI built with CMake | Compiled in an Ubuntu 24.04 development container using GCC 13.3 and Ninja |
-| CLI | `--help`, `--version`, `coordinator`, `join --id NAME`, `cluster`, `run`; version `0.1.0-dev` |
+| CLI | help, version, coordinator, join, cluster, run, ps, logs; version 0.1.0-dev |
 | Worker/job resource data models | `include/forge/scheduler.hpp` |
 | Compatibility and free-resource checks | `src/scheduler.cpp`, covered by scheduler tests |
 | Resource-aware placement heuristic | Implemented and tested, including deterministic ties |
@@ -56,7 +56,8 @@ motivation in your own words rather than presenting this document as a script.
 | Automatic capability detection | Worker reports Linux architecture and system CPU/RAM totals; no cgroup adjustment or GPU discovery |
 | Round-robin and least-loaded policies | Planned; only the resource-aware heuristic exists |
 | Worker process execution | Implemented: explicit argv, output/exit capture, runtime/output bounds, one job per worker |
-| File transfer, batch map, persistent logs/history | Planned |
+| Job inspection and retained logs | Implemented: active jobs plus 64 finalized results in memory, explicit terminal states |
+| File transfer, batch map, durable logs/history | Planned |
 | Heartbeats | Implemented with READY/SUSPECT/DEAD inspection and session deadlines |
 | Retries and attempt tracking | Planned |
 | Namespaces and cgroups v2 | Planned |
@@ -80,7 +81,7 @@ placement accounting, not kernel resource enforcement.
 
 ## 3. Intended user experience
 
-`join`, `cluster`, and `run` exist for loopback operation. Other commands below
+join, cluster, run, ps, and logs exist for loopback operation. Other commands below
 remain the target interface. Current join requires `--id NAME`, and run requires
 options before `--` followed by command arguments:
 
@@ -219,10 +220,11 @@ registered session has a two-second receive deadline. This is inspection/session
 cleanup, not a rescheduling loop. Duplicate connected IDs are rejected; a closed
 session's ID can reconnect. There is no automatic worker reconnect yet.
 
-Current states are QUEUED, ASSIGNED, RUNNING, FINISHED. A terminal response carries
+Current active states are QUEUED, ASSIGNED, RUNNING. Terminal states are SUCCEEDED,
+FAILED, TIMED_OUT, LOST, UNSCHEDULABLE, and CANCELLED. A terminal response carries
 exit status or an infrastructure error. RUNNING means assignment is being sent,
 not an acknowledged successful exec. There are no retries, attempt IDs, durable
-history, or cancellation API yet. Worker loss fails the job without reassignment.
+history, or cancellation API yet. Completed results are retained in memory for 64 jobs. Worker loss fails the job without reassignment.
 
 Heartbeats provide evidence of recent contact. A missed heartbeat may indicate a
 network partition or overload rather than process death. Use monotonic elapsed
@@ -353,7 +355,7 @@ uses projected CPU/RAM reservation fractions, not sampled OS load.
 failure model. First establish correct single-coordinator behavior and measure
 the need. The availability limitation remains explicit.
 
-**What would you improve next?** Persistent job inspection/logs, input staging,
+**What would you improve next?** Durable job history, input staging,
 batch mapping, authenticated cross-machine connections, and explicit retry
 semantics. Prioritize these against real workloads and measured bottlenecks.
 
@@ -414,3 +416,27 @@ benchmark commands, raw results, and configuration with the eventual claims.
 Maintenance rule: when code changes, update implemented status, design decisions,
 validation evidence, limitations, and the short pitch together. The canonical
 framework remains the product target; this reference tracks defensible claims.
+
+## Job inspection milestone (November 1)
+
+ps shows active and retained jobs with assigned worker, terminal state, and exit
+status. logs retrieves the last accepted stdout/stderr and timeout/truncation
+flags. Fetching a failed command's logs succeeds as an inspection operation;
+it does not repeat the command or return its original failure as retrieval status.
+Infrastructure loss still returns an explanatory error.
+
+History retains 64 finalized results, evicts the oldest finalized entry, and is
+lost on restart. Live streaming is not implemented. The protocol caps and bounded
+command summaries keep all active/history rows within one frame. Retention tests
+use a deterministic worker stub to finish 70 jobs quickly; this is coordinator
+correctness evidence, not execution throughput evidence. Real-process execution
+tests cover binary log retrieval, RUNNING inspection, timeouts, and worker loss.
+
+See [job inspection semantics](job-inspection.md) and
+[retention integration tests](../tests/history_integration.py).
+Validation for this milestone: the initial five-suite Linux CTest run passed
+(scheduler, protocol, network, execution, history). The history test completed
+70 stub jobs and verified the 64-entry bound, eviction, and failed-result retrieval.
+After adding live state, binary log, timeout log, and lost-worker inspection
+assertions, the affected real-process execution suite passed again in about
+24.6 seconds. No physical-cluster performance claims follow from these checks.

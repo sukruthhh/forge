@@ -34,4 +34,7 @@ if(BUILD_TESTING)
   add_test(NAME execution_integration COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution_integration.py $<TARGET_FILE:forge>)
   set_tests_properties(execution_integration PROPERTIES TIMEOUT 90)
+  add_test(NAME history_integration COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/history_integration.py $<TARGET_FILE:forge>)
+  set_tests_properties(history_integration PROPERTIES TIMEOUT 45)
 endif()

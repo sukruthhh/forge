@@ -24,8 +24,8 @@ compatible worker. The registry mutex covers selection AND reservation, so
 concurrent clients cannot reserve the same slot. Each worker holds one job, even
 if CPU remains unused. CPU/RAM reservations are not enforced OS limits.
 
-Jobs transition QUEUED -> ASSIGNED -> RUNNING -> FINISHED. RUNNING means assignment
-is being delivered, not that exec succeeded. FINISHED carries a command result or
+Jobs transition from QUEUED to ASSIGNED to RUNNING, then to an explicit terminal state. RUNNING means assignment
+is being delivered, not that exec succeeded. A terminal state carries a command result or
 infrastructure failure. There is no start acknowledgment, durable history, or
 attempt/retry state machine. Map iteration follows lexicographic job ID order;
 queue fairness/FIFO is not guaranteed.
@@ -40,9 +40,9 @@ connection-handler limit. Unplaced jobs fail after five seconds. Submissions,
 heartbeats, results, and disconnects trigger scheduling. The assignment-to-result
 deadline is runtime plus five seconds, checked on worker messages; a session
 without messages times out independently. Runtime is 1..30 seconds. The CLI
-allows 45 seconds for its response. Results remain only until sent to the waiting
-client; a disconnected client does not automatically cancel an accepted job.
-`ps`, `logs`, later result lookup, batch mapping, and retries are not implemented.
+allows 45 seconds for its response. A disconnected client does not automatically
+cancel an accepted job. The latest 64 completed results are retained for inspection;
+see [job-inspection.md](job-inspection.md). Batch mapping and retries remain planned.
 
 ## Execution lifecycle
 
@@ -89,3 +89,8 @@ contain NUL. Zero memory means no RAM reservation, not enforced unlimited usage.
 SUBMIT is the first client message and receives RESULT or ERROR. HEARTBEAT can
 receive OK or ASSIGNMENT. Worker RESULT receives OK; the next heartbeat may fetch
 another assignment. Session loss yields ERROR to the waiting client, without retry.
+
+## Inspection update
+The job-inspection milestone adds bounded in-memory retention and explicit terminal states.
+Terminal states distinguish success, failure, timeout, loss, and placement expiry.
+See [job-inspection.md](job-inspection.md) for ps/logs and message IDs 10..12.

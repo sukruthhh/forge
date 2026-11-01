@@ -1,5 +1,6 @@
 """End-to-end job placement, execution, output, timeout, and worker-loss checks."""
 import concurrent.futures
+import re
 import os
 import signal
 import socket
@@ -70,15 +71,33 @@ try:
     result = run("python3", "-c", "import sys; sys.stdout.buffer.write(b'a\\x00b')")
     require(result.stdout == b"a\x00b", "binary output damaged")
 
+    job_id = re.search(rb"\[forge\] (job-\d+)", result.stderr).group(1).decode()
+    retained = subprocess.run([binary, "logs", job_id, "--port", str(port)], capture_output=True, timeout=5)
+    require(retained.returncode == 0 and retained.stdout == b"a\x00b", "binary log retrieval failed")
+    listed = subprocess.check_output([binary, "ps", "--port", str(port)], text=True, timeout=5)
+    require(job_id + "\tSUCCEEDED\texecutor-a\t0" in listed, "completed job not listed")
+
     # A long-running job must not stop worker heartbeats or coordinator inspection.
     with concurrent.futures.ThreadPoolExecutor() as pool:
         pending = pool.submit(run, "/bin/sleep", "2")
         time.sleep(1.5)
         require("READY" in cluster(), "execution starved heartbeat")
+        listed = subprocess.check_output([binary, "ps", "--port", str(port)], text=True, timeout=5)
+        require("\tRUNNING\texecutor-a\t" in listed, "running job not visible")
+        running_id = next(row.split("\t")[0] for row in listed.splitlines() if "\tRUNNING\t" in row)
+        unavailable = subprocess.run([binary, "logs", running_id, "--port", str(port)],
+                                     capture_output=True, timeout=5)
+        require(unavailable.returncode != 0 and b"not finished" in unavailable.stderr,
+                "running job logs must explain that streaming is unavailable")
         require(pending.result().returncode == 0, "sleep failed")
 
     result = run("/bin/sleep", "10", options=("--timeout", "1"))
     require(result.returncode == 124 and b"timed out" in result.stderr, "runtime deadline failed")
+    job_id = re.search(rb"\[forge\] (job-\d+)", result.stderr).group(1).decode()
+    listed = subprocess.check_output([binary, "ps", "--port", str(port)], text=True, timeout=5)
+    require(job_id + "\tTIMED_OUT\t" in listed, "timeout state not retained")
+    retained = subprocess.run([binary, "logs", job_id, "--port", str(port)], capture_output=True, timeout=5)
+    require(retained.returncode == 0 and b"timed out" in retained.stderr, "timeout logs unavailable")
     result = run("python3", "-c",
                  "import subprocess; subprocess.Popen(['/bin/sleep','10'])",
                  options=("--timeout", "1"))
@@ -87,6 +106,9 @@ try:
     result = run("/bin/true", options=("--cpu", "1048576"))
     require(result.returncode != 0 and b"no available compatible worker" in result.stderr,
             "impossible job not rejected after queue deadline")
+
+    listed = subprocess.check_output([binary, "ps", "--port", str(port)], text=True, timeout=5)
+    require("\tUNSCHEDULABLE\t" in listed, "queue expiry state not retained")
 
     # One worker must not overlap jobs even if advertised CPU capacity is large.
     with tempfile.TemporaryDirectory() as folder:
@@ -123,6 +145,8 @@ try:
             worker.wait(timeout=3)
             result = pending.result(timeout=7)
             require(result.returncode != 0 and b"worker lost" in result.stderr, "worker loss left job waiting")
+            listed = subprocess.check_output([binary, "ps", "--port", str(port)], text=True, timeout=5)
+            require("\tLOST\texecutor-a\t" in listed, "lost-worker state not retained")
             # SIGKILL cannot run worker cleanup. Clean the test child explicitly.
             try:
                 os.killpg(child_pid, signal.SIGKILL)

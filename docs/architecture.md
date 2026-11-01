@@ -54,3 +54,12 @@ continue. Explicit argv, posix_spawnp, dual output pipes, bounded capture, proce
 groups, and a runtime deadline define the first execution backend. Worker loss
 fails a job without retries. There is no durable history or file staging yet.
 See [execution.md](execution.md) for wire messages, lifecycle, and limitations.
+
+## 005: Bounded, in-memory completed-job history
+
+Separate active jobs from the latest 64 finalized results. Keep command exit
+status distinct from infrastructure loss and inspection-request success.
+Snapshots copy metadata under the registry mutex, with all socket I/O outside
+the lock. Bounded summaries and row counts fit one protocol frame; retained
+output keeps the existing per-stream limits. Restart discards history; durable
+storage and streaming remain separate future decisions.

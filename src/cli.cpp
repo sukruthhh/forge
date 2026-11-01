@@ -15,20 +15,28 @@ int main(int argc, char** argv) {
         std::cout << "Forge - private batch compute across your machines\n\n"
                      "Usage:\n  forge coordinator [--port 9000]\n"
                      "  forge join --id NAME [--port 9000]\n"
-                     "  forge cluster [--port 9000]\n\n"
+                     "  forge cluster [--port 9000]\n"
+                     "  forge ps [--port 9000]\n"
+                     "  forge logs JOB [--port 9000]\n\n"
                      "  forge run [--port 9000] [--cpu 1] [--memory 0] [--timeout 30] -- COMMAND [ARGS...]\n\n"
                      "Loopback only; trusted commands, no sandbox or authentication yet.\n";
         return 0;
     }
     const std::string_view command(argv[1]);
     std::uint16_t port = 9000;
-    std::string id;
+    std::string id, log_id;
     std::uint32_t cpu = 1, timeout = 30;
     std::uint64_t memory = 0;
     bool cpu_seen = false, memory_seen = false, timeout_seen = false;
     std::vector<std::string> arguments;
     bool port_seen = false;
-    for (int i = 2; i < argc; i += 2) {
+    int first_option = 2;
+    if (command == "logs") {
+        if (argc < 3) throw std::runtime_error("usage: forge logs JOB [--port PORT]");
+        log_id = argv[2];
+        first_option = 3;
+    }
+    for (int i = first_option; i < argc; i += 2) {
         if (command == "run" && std::string_view(argv[i]) == "--") {
             for (++i; i < argc; ++i) arguments.emplace_back(argv[i]);
             break;
@@ -62,6 +70,8 @@ int main(int argc, char** argv) {
     }
     if (command == "coordinator") return forge::coordinator(port);
     if (command == "cluster") return forge::cluster(port);
+    if (command == "ps") return forge::ps(port);
+    if (command == "logs") return forge::logs(port, log_id);
     if (command == "join" && !id.empty()) return forge::join(port, id);
     if (command == "run" && !arguments.empty()) return forge::run(port, cpu, memory, timeout, arguments);
     throw std::runtime_error("unsupported command; run forge --help");

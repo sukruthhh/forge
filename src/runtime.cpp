@@ -57,6 +57,7 @@ struct Job {
     std::uint32_t timeout;
     std::vector<std::string> arguments;
     std::string state = "QUEUED";
+    std::string worker;
     Clock::time_point assigned_at{};
     Message completion{Type::error, {"job unfinished"}};
     bool terminal = false;
@@ -72,6 +73,7 @@ struct Registry {
     std::mutex mutex;
     std::map<std::string, Record> workers;
     std::map<std::string, std::shared_ptr<Job>> jobs;
+    std::deque<std::shared_ptr<Job>> history;
     std::condition_variable changed;
     std::uint64_t next_job = 1;
 };
@@ -80,7 +82,10 @@ void finish(Registry& registry, Record& record, Message result) {
     if (!record.job->terminal) {
         record.job->completion = std::move(result);
         record.job->terminal = true;
-        record.job->state = "FINISHED";
+        const auto& completion = record.job->completion;
+        record.job->state = completion.type == Type::error ? "LOST" :
+            completion.fields[4] == "1" ? "TIMED_OUT" :
+            completion.fields[1] == "0" ? "SUCCEEDED" : "FAILED";
     }
     record.job.reset();
     record.reserved = {0, 0};
@@ -101,6 +106,7 @@ void schedule(Registry& registry) {
         auto selected = select_worker(candidates, job->requirements);
         if (!selected) continue;
         auto& record = registry.workers.at(candidates[*selected].id);
+        job->worker = candidates[*selected].id;
         record.job = job;
         record.reserved = job->requirements.resources;
         job->state = "ASSIGNED";
@@ -135,14 +141,18 @@ void submit(int fd, Registry& registry, const Message& message) {
             registry.changed.wait_for(lock, std::chrono::milliseconds(100));
             if (job->state == "QUEUED" && Clock::now() - queued_at >= std::chrono::seconds(5)) {
                 job->terminal = true;
+                job->state = "UNSCHEDULABLE";
                 job->completion = {Type::error, {job->id + ": no available compatible worker within 5 seconds"}};
             }
         }
         if (!job->terminal) {
+            job->state = "CANCELLED";
             job->completion = {Type::error, {job->id + ": coordinator stopping"}};
             job->terminal = true;
         }
         registry.jobs.erase(job->id);
+        registry.history.push_back(job);
+        if (registry.history.size() > 64) registry.history.pop_front();
     }
     net::send(fd, job->completion);
 }
@@ -158,12 +168,53 @@ Message snapshot(Registry& registry) {
     }
     return result;
 }
+std::string summary(const std::vector<std::string>& arguments) {
+    std::string text;
+    for (const auto& arg : arguments) {
+        if (!text.empty()) text += ' ';
+        for (unsigned char c : arg) {
+            if (text.size() >= 80) return text + "...";
+            text += c >= 32 && c < 127 ? static_cast<char>(c) : '?';
+        }
+    }
+    return text;
+}
+Message inspect(Registry& registry, const Message& request) {
+    std::lock_guard lock(registry.mutex);
+    if (request.type == Type::jobs && request.fields.empty()) {
+        Message reply{Type::job_list, {}};
+        auto append = [&reply](const std::shared_ptr<Job>& job) {
+            reply.fields.insert(reply.fields.end(), {job->id, job->state,
+                job->worker.empty() ? "-" : job->worker,
+                job->terminal && job->completion.type == Type::result ? job->completion.fields[1] : "-",
+                summary(job->arguments)});
+        };
+        for (const auto& [id, job] : registry.jobs) append(job);
+        for (const auto& job : registry.history) append(job);
+        return reply;
+    }
+    if (request.type != Type::logs || request.fields.size() != 1 || !label(request.fields[0]))
+        throw std::runtime_error("invalid inspection request");
+    const auto& id = request.fields[0];
+    auto active = registry.jobs.find(id);
+    if (active != registry.jobs.end()) {
+        if (active->second->terminal) return active->second->completion;
+        return {Type::error, {id + ": not finished; live streaming is not implemented"}};
+    }
+    for (const auto& job : registry.history)
+        if (job->id == id) return job->completion;
+    return {Type::error, {id + ": unknown or evicted job (history is in memory only)"}};
+}
 void handle(net::Socket socket, Registry& registry) {
     std::string registered;
     try {
         auto message = net::receive(socket.get());
         if (message.type == Type::cluster && message.fields.empty()) {
             net::send(socket.get(), snapshot(registry));
+            return;
+        }
+        if (message.type == Type::jobs || message.type == Type::logs) {
+            net::send(socket.get(), inspect(registry, message));
             return;
         }
         if (message.type == Type::submit) {
@@ -336,6 +387,33 @@ int cluster(std::uint16_t port) {
     for (std::size_t i = 0; i < result.fields.size(); ++i)
         std::cout << result.fields[i] << ((i + 1) % 7 == 0 ? '\n' : '\t');
     return 0;
+}
+
+int ps(std::uint16_t port) {
+    auto socket = net::connect_loopback(port);
+    net::send(socket.get(), {Type::jobs, {}});
+    auto response = net::receive(socket.get());
+    if (response.type != Type::job_list || response.fields.size() % 5 != 0)
+        throw std::runtime_error("invalid job list");
+    std::cout << "ID\tSTATE\tWORKER\tEXIT\tCOMMAND\n";
+    for (std::size_t i = 0; i < response.fields.size(); ++i)
+        std::cout << response.fields[i] << ((i + 1) % 5 == 0 ? '\n' : '\t');
+    return 0;
+}
+int logs(std::uint16_t port, const std::string& id) {
+    auto socket = net::connect_loopback(port);
+    net::send(socket.get(), {Type::logs, {id}});
+    auto response = net::receive(socket.get());
+    if (response.type == Type::error && response.fields.size() == 1)
+        throw std::runtime_error(response.fields[0]);
+    if (response.type != Type::result || response.fields.size() != 6)
+        throw std::runtime_error("invalid retained result");
+    std::cout << response.fields[2];
+    std::cerr << response.fields[3];
+    std::cerr << "[forge] " << response.fields[0] << " exit=" << response.fields[1] << '\n';
+    if (response.fields[4] == "1") std::cerr << "[forge] execution timed out\n";
+    if (response.fields[5] == "1") std::cerr << "[forge] output truncated at 16384 bytes per stream\n";
+    return 0; // retrieval succeeded, independent of the original command's exit
 }
 
 int run(std::uint16_t port, std::uint32_t cpu, std::uint64_t memory,

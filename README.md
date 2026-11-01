@@ -9,7 +9,7 @@ heterogeneous machines. Stack: **C++20 | Linux | TCP/IP | CMake**.
 
 Current milestone: resource-aware placement, a bounded/versioned TCP protocol,
 coordinator, worker registration, heartbeats, cluster inspection, and scheduled
-command execution on Linux loopback. Includes scheduler/protocol tests, TCP and
+command execution, job inspection, and retained logs on Linux loopback. Includes scheduler/protocol tests, TCP and
 execution integration tests, and Linux CI. No physical-cluster benchmark results
 exist. See [protocol details](docs/protocol.md) and [execution limits](docs/execution.md).
 
@@ -62,4 +62,10 @@ container limits and advertises CUDA as unavailable.
 `run` executes trusted commands already installed on a worker. Captured output is
 limited to 16 KiB per stream, and runtime to 30 seconds. CPU/RAM reservations are
 not OS-enforced limits. Authentication, file staging, sandboxing, batch mapping,
-job history, and automatic retries are not implemented yet.
+persistent history and automatic retries are not implemented yet.
+
+## Inspect jobs after execution
+
+Use ./build/forge ps and ./build/forge logs job-1 against the same coordinator.
+The latest 64 completed jobs are retained in memory until eviction or restart.
+See [job inspection](docs/job-inspection.md) for states and retrieval semantics.

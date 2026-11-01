@@ -19,7 +19,7 @@ repeated fields:
 ```
 
 Fields are binary-safe at the framing layer. Schema validation applies separately.
-Unknown versions/types (outside 1..9), excess fields, trailing bytes, truncated fields, and
+Unknown versions/types (outside 1..12), excess fields, trailing bytes, truncated fields, and
 out-of-range lengths are errors. Reads/writes handle fragmentation and coalescing.
 Each receive shares one absolute monotonic deadline across header and body;
 receiving a few bytes does not reset it. Sending suppresses SIGPIPE and uses a
@@ -69,3 +69,5 @@ SIGINT/SIGTERM set a lock-free stop flag. The accept loop checks it periodically
 handlers finish or time out and are joined before registry destruction. Registry
 state is in memory and lost on restart. Thread-per-connection favors simplicity
 at this scale; an event loop is a future option if measurements justify it.
+
+Job listing and log retrieval add message IDs 10..12; see [job-inspection.md](job-inspection.md).
