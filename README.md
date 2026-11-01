@@ -69,3 +69,23 @@ persistent history and automatic retries are not implemented yet.
 Use ./build/forge ps and ./build/forge logs job-1 against the same coordinator.
 The latest 64 completed jobs are retained in memory until eviction or restart.
 See [job inspection](docs/job-inspection.md) for states and retrieval semantics.
+
+## Background build watcher
+
+The forge-build-watch Docker container runs scripts/watch.sh against this folder.
+It watches source/test/build-configuration contents, builds in build/watch, and
+runs CTest only after a change. It stays quiet while files are unchanged.
+
+- View output: docker logs --tail 60 forge-build-watch
+- Stop: docker stop forge-build-watch
+- Resume: docker start forge-build-watch
+
+Docker must remain running. This watcher does not implement Forge features or
+continue AI development; it compiles and tests local changes. To create it on
+another machine after building forge-dev, substitute its absolute repository path:
+
+    docker run -d --init --name forge-build-watch --mount type=bind,source=ABSOLUTE_REPO_PATH,target=/workspace forge-dev sh scripts/watch.sh
+
+The watcher does not replace the existing demo build directory or restart your
+running coordinator/workers. Restart those processes after rebuilding their binary
+to use new protocol features such as ps/logs.
