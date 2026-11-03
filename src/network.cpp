@@ -71,9 +71,9 @@ Socket& Socket::operator=(Socket&& other) noexcept {
 
 std::vector<std::uint8_t> encode(const Message& message) {
     const auto type = static_cast<std::uint8_t>(message.type);
-    if (type < 1 || type > 12 || message.fields.size() > max_fields)
+    if (type < 1 || type > 13 || message.fields.size() > max_fields)
         throw std::runtime_error("invalid message");
-    std::vector<std::uint8_t> payload{1, type}; // protocol version, message type
+    std::vector<std::uint8_t> payload{1, type};
     append32(payload, static_cast<std::uint32_t>(message.fields.size()));
     for (const auto& field : message.fields) {
         if (field.size() > max_frame || payload.size() + 4 + field.size() > max_frame)
@@ -89,7 +89,7 @@ std::vector<std::uint8_t> encode(const Message& message) {
 
 Message decode(const std::vector<std::uint8_t>& payload) {
     if (payload.size() < 6 || payload.size() > max_frame || payload[0] != 1 ||
-        payload[1] < 1 || payload[1] > 12) throw std::runtime_error("invalid protocol header");
+        payload[1] < 1 || payload[1] > 13) throw std::runtime_error("invalid protocol header");
     Message message{static_cast<Type>(payload[1]), {}};
     std::size_t offset = 2;
     const auto count = read32(payload, offset);

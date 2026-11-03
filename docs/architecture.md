@@ -63,3 +63,17 @@ Snapshots copy metadata under the registry mutex, with all socket I/O outside
 the lock. Bounded summaries and row counts fit one protocol frame; retained
 output keeps the existing per-stream limits. Restart discards history; durable
 storage and streaming remain separate future decisions.
+
+## 006: Authenticate loopback sessions before adding remote endpoints
+
+An optional FORGE_TOKEN gates every connection before registration, submission,
+or inspection. Keep one handshake in the shared client connection helper and one
+gate in the coordinator handler so commands cannot bypass it. Read coordinator
+configuration before listening; reject invalid credentials without mutating state.
+Unconfigured loopback development remains compatible with existing clients.
+
+This adds no cryptographic dependency and establishes admission tests, but bearer
+authentication alone is insufficient for an exposed network. The token is sent
+unencrypted and all holders share permissions. Keep loopback binding until
+authenticated encrypted transport and remote endpoint policy are implemented.
+See [authentication.md](authentication.md) for operational limits and protocol.

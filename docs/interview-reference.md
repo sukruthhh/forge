@@ -1,8 +1,8 @@
 # Forge interview reference
 
-Updated: November 1, 2026
+Updated: November 3, 2026
 
-Implementation baseline: bounded job inspection and retained logs (November 1)
+Implementation baseline: recovered and verified Linux runtime, with optional loopback authentication (November 3)
 
 Stack: **C++20 | Linux | TCP/IP | CMake**
 
@@ -27,7 +27,8 @@ programmable compute cluster.
 > placement core, then added a Linux loopback TCP coordinator, worker registration,
 > heartbeats, and cluster inspection. The first execution path now schedules
 > explicit commands on workers, collects output and exit status, and handles
-> runtime limits and worker loss. Cross-machine execution and retries are next.
+> runtime limits and worker loss. Optional shared-token authentication gates local
+> sessions. Encrypted cross-machine execution and retries are next.
 
 **Longer explanation:** The target user owns several machines with different
 resources but otherwise submits work to each machine manually. Forge should make
@@ -59,6 +60,7 @@ motivation in your own words rather than presenting this document as a script.
 | Job inspection and retained logs | Implemented: active jobs plus 64 finalized results in memory, explicit terminal states |
 | File transfer, batch map, durable logs/history | Planned |
 | Heartbeats | Implemented with READY/SUSPECT/DEAD inspection and session deadlines |
+| Optional authentication | FORGE_TOKEN gates loopback registration, submission, and inspection; no encryption or separate worker identities |
 | Retries and attempt tracking | Planned |
 | Namespaces and cgroups v2 | Planned |
 | Native macOS workers and CUDA placement | Planned; current matching only checks a supplied CUDA boolean |
@@ -270,7 +272,10 @@ Neither feature by itself establishes a complete hostile-code sandbox. Initial
 scope is trusted workloads on a private cluster. Authenticate submissions and
 worker membership before exposing remote command execution beyond localhost;
 define transport protection and credential handling before wider deployment.
-No authentication or encryption implementation exists yet.
+Optional shared-token authentication gates coordinator connections when FORGE_TOKEN
+is configured. There is no encryption, server authentication, role separation, or
+per-worker credential identity. The token is inherited by trusted workloads;
+see [authentication](authentication.md).
 
 Packaging needs size limits, path traversal protection, explicit dependencies,
 and compatible artifacts. A CUDA flag alone is not proof of driver/runtime
@@ -365,7 +370,7 @@ Do not claim independent authorship of generated code. Before presenting a modul
 be able to walk through its control flow, invariants, tradeoffs, and failure cases.
 
 **What is the biggest limitation today?** Execution works between local worker
-processes on loopback, with preinstalled programs/files. There is no authenticated
+processes on loopback, with preinstalled programs/files. There is no verified
 physical cluster, upload, sandboxing, automatic recovery, or real scaling evidence.
 
 ## 11. Resume targets: future XYZ bullets
@@ -440,3 +445,25 @@ Validation for this milestone: the initial five-suite Linux CTest run passed
 After adding live state, binary log, timeout log, and lost-worker inspection
 assertions, the affected real-process execution suite passed again in about
 24.6 seconds. No physical-cluster performance claims follow from these checks.
+
+## Recovery and authentication foundation (November 3)
+
+Recovered main at 2cd3c49 with a clean checkout matching origin/main after fetch.
+Started Docker Desktop and rebuilt Dockerfile.dev on this laptop. A fresh Ubuntu
+24.04/GCC 13.3 Debug build passed all five baseline CTest suites in 32.92 seconds.
+See the [recovery audit](recovery-audit.md) for implemented/partial/missing features.
+
+Added optional FORGE_TOKEN authentication before every coordinator operation.
+All six suites passed in the final Debug run (36.57 seconds), including rejected
+credentials, malformed and repeated authentication, rejected registration without
+registry mutation, coalesced handshake/request frames, an authenticated request
+deadline, successful worker execution and ps/logs, and invalid configuration.
+These durations describe correctness runs, not benchmarks.
+
+The shared credential authorizes all operations and is sent unencrypted over
+loopback. It is not server authentication, independent worker identity, a sandbox,
+or evidence of physical-machine execution. Keep loopback binding. The next
+Milestone A work is authenticated encrypted transport, remote endpoint policy,
+and separate-machine validation. GitHub Actions status could not be retrieved
+through the connected GitHub tool during this recovery; local validation is the
+evidence recorded here.

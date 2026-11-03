@@ -28,7 +28,6 @@ struct JobRequirements {
     bool cuda = false;
 };
 
-// Returns an actionable reason when placement is impossible.
 std::optional<std::string> rejection(const Worker&, const JobRequirements&);
 
 // Deterministic resource-aware placement. The caller reserves the selected

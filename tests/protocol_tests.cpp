@@ -16,6 +16,10 @@ int main() {
     auto bytes = encode(message);
     auto decoded = decode({bytes.begin() + 4, bytes.end()});
     check(decoded.type == message.type && decoded.fields == message.fields, "round trip failed");
+    message = {Type::authenticate, {std::string(32, 'x')}};
+    bytes = encode(message);
+    decoded = decode({bytes.begin() + 4, bytes.end()});
+    check(decoded.type == message.type && decoded.fields == message.fields, "authentication round trip failed");
     auto boundary = encode({Type::error, {std::string(max_frame - 10, 'x')}});
     check(boundary.size() == max_frame + 4, "boundary frame size");
     check(decode({boundary.begin() + 4, boundary.end()}).fields[0].size() == max_frame - 10,
@@ -25,6 +29,8 @@ int main() {
     rejects([] { decode({1, 4}); });
     rejects([] { decode({2, 4, 0, 0, 0, 0}); });
     rejects([] { decode({1, 99, 0, 0, 0, 0}); });
+    rejects([] { encode({static_cast<Type>(14), {}}); });
+    rejects([] { decode({1, 14, 0, 0, 0, 0}); });
     rejects([] { decode({1, 4, 0, 0, 0, 0, 0}); });
     rejects([] { decode({1, 4, 0, 0, 0, 1, 255, 255, 255, 255}); });
     std::cout << "Protocol checks passed\n";

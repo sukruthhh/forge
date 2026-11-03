@@ -10,6 +10,7 @@
 #include <chrono>
 #include <csignal>
 #include <condition_variable>
+#include <cstdlib>
 #include <deque>
 #include <future>
 #include <iostream>
@@ -50,6 +51,33 @@ bool label(const std::string& value) {
             return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
                    (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.';
         });
+}
+std::string configured_token() {
+    const char* value = std::getenv("FORGE_TOKEN");
+    if (!value) return {};
+    std::string token(value);
+    if (token.size() < 32 || token.size() > 256 ||
+        !std::all_of(token.begin(), token.end(), [](unsigned char c) { return c >= 33 && c <= 126; }))
+        throw std::runtime_error("FORGE_TOKEN must contain 32-256 printable non-space ASCII characters");
+    return token;
+}
+bool token_matches(const std::string& expected, const std::string& supplied) {
+    if (expected.size() != supplied.size()) return false;
+    unsigned difference = 0;
+    for (std::size_t i = 0; i < expected.size(); ++i)
+        difference |= static_cast<unsigned char>(expected[i]) ^ static_cast<unsigned char>(supplied[i]);
+    return difference == 0;
+}
+net::Socket connect_coordinator(std::uint16_t port) {
+    const auto token = configured_token();
+    auto socket = net::connect_loopback(port);
+    if (!token.empty()) {
+        net::send(socket.get(), {Type::authenticate, {token}});
+        const auto response = net::receive(socket.get());
+        if (response.type != Type::ok || !response.fields.empty())
+            throw std::runtime_error("coordinator authentication failed");
+    }
+    return socket;
 }
 struct Job {
     std::string id;
@@ -114,7 +142,6 @@ void schedule(Registry& registry) {
     }
 }
 void submit(int fd, Registry& registry, const Message& message) {
-    // Schema: CPU, RAM bytes, timeout seconds, OS, architecture, argv...
     const auto& fields = message.fields;
     if (fields.size() < 6 || fields.size() > 133 || fields[5].empty() ||
         fields[3] != "linux" || !label(fields[4]))
@@ -205,10 +232,17 @@ Message inspect(Registry& registry, const Message& request) {
         if (job->id == id) return job->completion;
     return {Type::error, {id + ": unknown or evicted job (history is in memory only)"}};
 }
-void handle(net::Socket socket, Registry& registry) {
+void handle(net::Socket socket, Registry& registry, const std::string& token) {
     std::string registered;
     try {
         auto message = net::receive(socket.get());
+        if (!token.empty()) {
+            if (message.type != Type::authenticate || message.fields.size() != 1 ||
+                !token_matches(token, message.fields[0]))
+                throw std::runtime_error("authentication required or invalid credential");
+            net::send(socket.get(), {Type::ok, {}});
+            message = net::receive(socket.get());
+        }
         if (message.type == Type::cluster && message.fields.empty()) {
             net::send(socket.get(), snapshot(registry));
             return;
@@ -293,6 +327,7 @@ void expect_ok(const Message& message) {
 }
 
 int coordinator(std::uint16_t port) {
+    const auto token = configured_token();
     install_signals();
     auto listener = net::listen_loopback(port);
     Registry registry;
@@ -317,8 +352,8 @@ int coordinator(std::uint16_t port) {
         if (slot->thread.joinable()) slot->thread.join();
         slot->done = false;
         try {
-            slot->thread = std::jthread([socket = std::move(peer), &registry, &done = slot->done]() mutable {
-                handle(std::move(socket), registry);
+            slot->thread = std::jthread([socket = std::move(peer), &registry, &token, &done = slot->done]() mutable {
+                handle(std::move(socket), registry, token);
                 done = true;
             });
         } catch (...) {
@@ -337,7 +372,7 @@ int join(std::uint16_t port, const std::string& id) {
     const auto cpus = ::sysconf(_SC_NPROCESSORS_ONLN);
     if (::uname(&system) != 0 || ::sysinfo(&memory) != 0 || cpus <= 0)
         throw std::runtime_error("capability discovery failed");
-    auto socket = net::connect_loopback(port);
+    auto socket = connect_coordinator(port);
     net::send(socket.get(), {Type::register_worker,
         {id, "linux", system.machine, std::to_string(cpus),
          std::to_string(static_cast<std::uint64_t>(memory.totalram) * memory.mem_unit), "0"}});
@@ -378,7 +413,7 @@ int join(std::uint16_t port, const std::string& id) {
 }
 
 int cluster(std::uint16_t port) {
-    auto socket = net::connect_loopback(port);
+    auto socket = connect_coordinator(port);
     net::send(socket.get(), {Type::cluster, {}});
     auto result = net::receive(socket.get());
     if (result.type != Type::snapshot || result.fields.size() % 7 != 0)
@@ -390,7 +425,7 @@ int cluster(std::uint16_t port) {
 }
 
 int ps(std::uint16_t port) {
-    auto socket = net::connect_loopback(port);
+    auto socket = connect_coordinator(port);
     net::send(socket.get(), {Type::jobs, {}});
     auto response = net::receive(socket.get());
     if (response.type != Type::job_list || response.fields.size() % 5 != 0)
@@ -401,7 +436,7 @@ int ps(std::uint16_t port) {
     return 0;
 }
 int logs(std::uint16_t port, const std::string& id) {
-    auto socket = net::connect_loopback(port);
+    auto socket = connect_coordinator(port);
     net::send(socket.get(), {Type::logs, {id}});
     auto response = net::receive(socket.get());
     if (response.type == Type::error && response.fields.size() == 1)
@@ -423,7 +458,7 @@ int run(std::uint16_t port, std::uint32_t cpu, std::uint64_t memory,
     Message request{Type::submit, {std::to_string(cpu), std::to_string(memory),
         std::to_string(timeout), "linux", system.machine}};
     request.fields.insert(request.fields.end(), arguments.begin(), arguments.end());
-    auto socket = net::connect_loopback(port);
+    auto socket = connect_coordinator(port);
     net::send(socket.get(), request);
     auto result = net::receive(socket.get(), std::chrono::seconds(45));
     if (result.type == Type::error && result.fields.size() == 1)

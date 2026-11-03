@@ -19,7 +19,7 @@ int main(int argc, char** argv) {
                      "  forge ps [--port 9000]\n"
                      "  forge logs JOB [--port 9000]\n\n"
                      "  forge run [--port 9000] [--cpu 1] [--memory 0] [--timeout 30] -- COMMAND [ARGS...]\n\n"
-                     "Loopback only; trusted commands, no sandbox or authentication yet.\n";
+                     "Loopback only; trusted commands, no sandbox. Set FORGE_TOKEN on all peers to require authentication.\n";
         return 0;
     }
     const std::string_view command(argv[1]);

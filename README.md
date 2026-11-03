@@ -9,7 +9,8 @@ heterogeneous machines. Stack: **C++20 | Linux | TCP/IP | CMake**.
 
 Current milestone: resource-aware placement, a bounded/versioned TCP protocol,
 coordinator, worker registration, heartbeats, cluster inspection, and scheduled
-command execution, job inspection, and retained logs on Linux loopback. Includes scheduler/protocol tests, TCP and
+command execution, job inspection, retained logs, and optional shared-token
+authentication on Linux loopback. Includes scheduler/protocol tests, TCP and
 execution integration tests, and Linux CI. No physical-cluster benchmark results
 exist. See [protocol details](docs/protocol.md) and [execution limits](docs/execution.md).
 
@@ -61,8 +62,10 @@ container limits and advertises CUDA as unavailable.
 
 `run` executes trusted commands already installed on a worker. Captured output is
 limited to 16 KiB per stream, and runtime to 30 seconds. CPU/RAM reservations are
-not OS-enforced limits. Authentication, file staging, sandboxing, batch mapping,
-persistent history and automatic retries are not implemented yet.
+not OS-enforced limits. File staging, sandboxing, batch mapping,
+persistent history and automatic retries are not implemented yet. Optional loopback
+authentication uses `FORGE_TOKEN`; see [authentication](docs/authentication.md)
+and the [recovery audit](docs/recovery-audit.md).
 
 ## Inspect jobs after execution
 
@@ -72,7 +75,7 @@ See [job inspection](docs/job-inspection.md) for states and retrieval semantics.
 
 ## Background build watcher
 
-The forge-build-watch Docker container runs scripts/watch.sh against this folder.
+An optional forge-build-watch Docker container can run scripts/watch.sh against this folder.
 It watches source/test/build-configuration contents, builds in build/watch, and
 runs CTest only after a change. It stays quiet while files are unchanged.
 

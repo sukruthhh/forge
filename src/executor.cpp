@@ -15,7 +15,7 @@ extern char** environ;
 
 namespace forge {
 namespace {
-constexpr std::size_t output_limit = 16384; // each stream; fits result frame
+constexpr std::size_t output_limit = 16384;
 struct Pipe {
     net::Socket read;
     net::Socket write;

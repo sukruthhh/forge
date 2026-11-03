@@ -1,6 +1,7 @@
 # TCP protocol v1: registration and liveness
 
-Implemented on Linux, loopback only. No authentication or encryption. Job submission
+Implemented on Linux, loopback only. Optional shared-token authentication is
+described in [authentication.md](authentication.md); encryption is not implemented. Job submission
 and process execution are described in [execution.md](execution.md), which extends
 this registration/liveness protocol with message IDs 7..9.
 
@@ -19,7 +20,7 @@ repeated fields:
 ```
 
 Fields are binary-safe at the framing layer. Schema validation applies separately.
-Unknown versions/types (outside 1..12), excess fields, trailing bytes, truncated fields, and
+Unknown versions/types (outside 1..13), excess fields, trailing bytes, truncated fields, and
 out-of-range lengths are errors. Reads/writes handle fragmentation and coalescing.
 Each receive shares one absolute monotonic deadline across header and body;
 receiving a few bytes does not reset it. Sending suppresses SIGPIPE and uses a
@@ -35,6 +36,7 @@ deadline too. Connection attempts are limited to three seconds.
 | 4 | OK | None |
 | 5 | SNAPSHOT | Repeated groups of seven fields: the six registration fields plus state |
 | 6 | ERROR | One diagnostic string; connection closes afterward |
+| 13 | AUTHENTICATE | One shared token; required first when FORGE_TOKEN is configured |
 
 Registration IDs, OS, and architecture labels are 1..64 ASCII letters, digits,
 dots, underscores, or hyphens. CPU is 1..1048576; RAM is a positive uint64.

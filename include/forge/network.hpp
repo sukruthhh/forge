@@ -6,7 +6,6 @@
 #include <vector>
 
 namespace forge::net {
-// Move-only ownership prevents descriptor leaks and accidental double-close.
 class Socket {
 public:
     explicit Socket(int fd = -1) : fd_(fd) {}
@@ -23,7 +22,7 @@ private:
 enum class Type : std::uint8_t { register_worker = 1, heartbeat = 2, cluster = 3,
                                 ok = 4, snapshot = 5, error = 6,
                                 submit = 7, assignment = 8, result = 9,
-                                jobs = 10, logs = 11, job_list = 12 };
+                                jobs = 10, logs = 11, job_list = 12, authenticate = 13 };
 struct Message {
     Type type;
     std::vector<std::string> fields;

@@ -10,7 +10,6 @@ std::optional<std::string> rejection(const Worker& w, const JobRequirements& j) 
     if (!j.os.empty() && j.os != w.os) return "OS mismatch";
     if (!j.arch.empty() && j.arch != w.arch) return "architecture mismatch";
     if (j.cuda && !w.cuda) return "CUDA required";
-    // Validate before subtracting to avoid unsigned underflow.
     if (w.reserved.cpu > w.capacity.cpu ||
         w.reserved.memory_bytes > w.capacity.memory_bytes)
         return "invalid worker reservations";
