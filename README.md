@@ -9,8 +9,9 @@ heterogeneous machines. Stack: **C++20 | Linux | TCP/IP | CMake**.
 
 Current milestone: resource-aware placement, a bounded/versioned TCP protocol,
 coordinator, worker registration, heartbeats, cluster inspection, and scheduled
-command execution, job inspection, retained logs, and optional shared-token
-authentication on Linux loopback. Includes scheduler/protocol tests, TCP and
+command execution, job inspection, retained logs, and mutual TLS for configurable
+IPv4 endpoints. Plaintext development is limited to loopback; a shared token is
+an optional additional gate. Includes scheduler/protocol tests, TCP, TLS, and
 execution integration tests, and Linux CI. No physical-cluster benchmark results
 exist. See [protocol details](docs/protocol.md) and [execution limits](docs/execution.md).
 
@@ -22,7 +23,12 @@ the [interview reference](docs/interview-reference.md).
 
 ## Build on Linux
 
-Requires a C++20 compiler and CMake 3.20+.
+Requires a C++20 compiler, CMake 3.20+, and OpenSSL 3 development libraries.
+Tests also require Python 3 and the openssl executable. On Ubuntu:
+
+```sh
+sudo apt-get install build-essential cmake ninja-build libssl-dev openssl python3
+```
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
@@ -56,8 +62,10 @@ running development container):
 ```
 
 Stop a worker and inspect the cluster again to see its DEAD record. Connections
-are restricted to `127.0.0.1`; these commands do not join physical remote machines
-yet. The worker currently reports system CPU/RAM totals without accounting for
+default to `127.0.0.1`. To configure encrypted network endpoints, use the
+[TLS setup and separate-machine checklist](docs/network-setup.md). Network behavior
+has local-process and Docker-bridge tests; physical-machine validation is pending.
+The worker currently reports system CPU/RAM totals without accounting for
 container limits and advertises CUDA as unavailable.
 
 `run` executes trusted commands already installed on a worker. Captured output is
@@ -66,6 +74,18 @@ not OS-enforced limits. File staging, sandboxing, batch mapping,
 persistent history and automatic retries are not implemented yet. Optional loopback
 authentication uses `FORGE_TOKEN`; see [authentication](docs/authentication.md)
 and the [recovery audit](docs/recovery-audit.md).
+
+## Test a networked cluster locally
+
+After building the Linux binary in build/recovery and building forge-dev:
+
+```sh
+python scripts/test-container-cluster.py
+```
+
+This starts four temporary containers on a private bridge, verifies mutual TLS,
+placement on two workers, output inspection, and worker loss, then cleans up.
+It is a network integration test on one host, not a physical-cluster benchmark.
 
 ## Inspect jobs after execution
 

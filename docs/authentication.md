@@ -1,4 +1,7 @@
-# Loopback authentication foundation
+# Optional shared-token admission
+
+Mutual TLS and remote endpoint setup are documented in [network-setup.md](network-setup.md).
+FORGE_TOKEN can be used in either TLS mode or plaintext loopback development.
 
 Set the same `FORGE_TOKEN` environment variable on the coordinator, workers, and
 CLI clients to enable shared-token authentication. The value must contain 32-256
@@ -17,11 +20,12 @@ export FORGE_TOKEN="$(cat /path/to/private/forge-token)"
 ```
 
 Protect the file with owner-only permissions. No credential is passed as a CLI
-argument. Unset FORGE_TOKEN retains the unauthenticated loopback development mode;
-an explicitly empty or malformed value fails rather than disabling authentication.
+argument. Unset FORGE_TOKEN disables this additional gate; TLS admission remains
+active if configured. With both TLS and the token unset, loopback development is
+unauthenticated. An explicitly empty or malformed token fails rather than disabling authentication.
 Clients configured with a token never fall back to an unauthenticated request.
 
-The coordinator validates its configuration before opening a listener, then
+When FORGE_TOKEN is configured, the coordinator validates it before opening a listener, then
 requires AUTHENTICATE as the first frame on every connection. Successful
 authentication receives OK, followed by the ordinary registration, submission,
 or inspection exchange. Failed authentication returns a generic ERROR and closes
@@ -31,19 +35,20 @@ and frame bounds still apply. Tokens are not included in diagnostics.
 
 ## Scope and limits
 
-The token is a bearer credential sent without encryption over loopback. It does
-not authenticate the coordinator to clients or prevent replay if captured. All
-credential holders have the same permissions, including worker registration and
+In plaintext loopback mode the token is a bearer credential sent without
+encryption. The token alone does not authenticate the coordinator or prevent
+replay if captured. In TLS mode the token travels inside a mutually authenticated,
+encrypted connection. All credential holders have the same permissions, including worker registration and
 command submission; worker IDs are session labels, not cryptographic identities.
 There is no per-worker revocation or role separation. Rotate the token by stopping
 and restarting the coordinator and peers with a new secret.
 
 Commands remain trusted and inherit the worker environment, including FORGE_TOKEN,
 and user privileges. This gate is not a hostile-workload boundary. The listener
-still binds only 127.0.0.1. Do not expose it through a public port forward or proxy.
-Authenticated encrypted transport and separate-machine tests are still required
-before claiming native cross-machine support. No such claim follows from these
-local tests.
+defaults to 127.0.0.1; non-loopback endpoints require mutual TLS. Do not expose
+plaintext loopback through a port forward or proxy. Network execution has been
+verified with local processes and separate containers; physical-machine tests
+are pending. Neither token authentication nor TLS provides workload isolation.
 
 ## Wire extension
 

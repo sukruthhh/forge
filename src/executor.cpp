@@ -93,7 +93,11 @@ ExecutionResult execute(const std::vector<std::string>& arguments,
     checked(::posix_spawn_file_actions_addopen(&config.actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0));
     checked(::posix_spawn_file_actions_adddup2(&config.actions, out.write.get(), STDOUT_FILENO));
     checked(::posix_spawn_file_actions_adddup2(&config.actions, err.write.get(), STDERR_FILENO));
-    checked(::posix_spawnattr_setflags(&config.attributes, POSIX_SPAWN_SETPGROUP));
+    sigset_t defaults;
+    ::sigemptyset(&defaults);
+    ::sigaddset(&defaults, SIGPIPE);
+    checked(::posix_spawnattr_setsigdefault(&config.attributes, &defaults));
+    checked(::posix_spawnattr_setflags(&config.attributes, POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGDEF));
     checked(::posix_spawnattr_setpgroup(&config.attributes, 0));
     pid_t pid = -1;
     const int error = ::posix_spawnp(&pid, argv.front(), &config.actions, &config.attributes, argv.data(), environ);

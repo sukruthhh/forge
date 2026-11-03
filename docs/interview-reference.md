@@ -2,7 +2,7 @@
 
 Updated: November 3, 2026
 
-Implementation baseline: recovered and verified Linux runtime, with optional loopback authentication (November 3)
+Implementation baseline: Linux runtime with mutual TLS, IPv4 endpoints, and optional token admission (November 3)
 
 Stack: **C++20 | Linux | TCP/IP | CMake**
 
@@ -28,7 +28,8 @@ programmable compute cluster.
 > heartbeats, and cluster inspection. The first execution path now schedules
 > explicit commands on workers, collects output and exit status, and handles
 > runtime limits and worker loss. Optional shared-token authentication gates local
-> sessions. Encrypted cross-machine execution and retries are next.
+> sessions. I then added mutual TLS and explicit IPv4 endpoints, with network tests
+> across separate containers. Physical-machine validation and retries are next.
 
 **Longer explanation:** The target user owns several machines with different
 resources but otherwise submits work to each machine manually. Forge should make
@@ -53,14 +54,14 @@ motivation in your own words rather than presenting this document as a script.
 | Resource-aware placement heuristic | Implemented and tested, including deterministic ties |
 | Test runner | Scheduler, protocol, and real TCP/subprocess integration suites; see validation record below |
 | GitHub Actions | Workflow configured; its remote execution has not been verified in this reference |
-| Coordinator, worker agents, TCP protocol | Registration, liveness, inspection, submission, assignment, and results on loopback |
+| Coordinator, worker agents, TCP protocol | Registration, liveness, inspection, submission, assignment, and results; loopback and Docker bridge tests |
 | Automatic capability detection | Worker reports Linux architecture and system CPU/RAM totals; no cgroup adjustment or GPU discovery |
 | Round-robin and least-loaded policies | Planned; only the resource-aware heuristic exists |
 | Worker process execution | Implemented: explicit argv, output/exit capture, runtime/output bounds, one job per worker |
 | Job inspection and retained logs | Implemented: active jobs plus 64 finalized results in memory, explicit terminal states |
 | File transfer, batch map, durable logs/history | Planned |
 | Heartbeats | Implemented with READY/SUSPECT/DEAD inspection and session deadlines |
-| Optional authentication | FORGE_TOKEN gates loopback registration, submission, and inspection; no encryption or separate worker identities |
+| Authentication and encryption | Mutual TLS 1.3 for IPv4 endpoints; optional FORGE_TOKEN gate; no per-worker identity binding or roles |
 | Retries and attempt tracking | Planned |
 | Namespaces and cgroups v2 | Planned |
 | Native macOS workers and CUDA placement | Planned; current matching only checks a supplied CUDA boolean |
@@ -83,7 +84,7 @@ placement accounting, not kernel resource enforcement.
 
 ## 3. Intended user experience
 
-join, cluster, run, ps, and logs exist for loopback operation. Other commands below
+join, cluster, run, ps, and logs support default loopback or TLS IPv4 endpoints. Other commands below
 remain the target interface. Current join requires `--id NAME`, and run requires
 options before `--` followed by command arguments:
 
@@ -195,6 +196,8 @@ deadlines, without Boost.Asio. TCP offers an ordered byte stream, not applicatio
 A receive can contain part of a message or multiple messages. A successful send
 does not prove that a worker executed the job or persisted the assignment.
 
+Networking now links OpenSSL 3 for mutually authenticated TLS; plain Linux socket
+I/O remains available for loopback development. See [network setup](network-setup.md).
 The protocol has versioning, explicit lengths, maximum frame sizes, message
 validation, partial-read/write handling, and absolute monotonic I/O deadlines.
 Version 1 uses binary length-prefixed fields rather than the earlier JSON proposal.
@@ -273,8 +276,9 @@ scope is trusted workloads on a private cluster. Authenticate submissions and
 worker membership before exposing remote command execution beyond localhost;
 define transport protection and credential handling before wider deployment.
 Optional shared-token authentication gates coordinator connections when FORGE_TOKEN
-is configured. There is no encryption, server authentication, role separation, or
-per-worker credential identity. The token is inherited by trusted workloads;
+is configured. Mutual TLS adds encryption, CA verification, and coordinator IP
+verification. There is no role separation, certificate revocation checking, or
+binding of worker IDs to certificate identities. The token is inherited by trusted workloads;
 see [authentication](authentication.md).
 
 Packaging needs size limits, path traversal protection, explicit dependencies,
@@ -370,7 +374,7 @@ Do not claim independent authorship of generated code. Before presenting a modul
 be able to walk through its control flow, invariants, tradeoffs, and failure cases.
 
 **What is the biggest limitation today?** Execution works between local worker
-processes on loopback, with preinstalled programs/files. There is no verified
+processes with preinstalled programs/files, tested locally and over a Docker bridge. There is no verified
 physical cluster, upload, sandboxing, automatic recovery, or real scaling evidence.
 
 ## 11. Resume targets: future XYZ bullets
@@ -467,3 +471,40 @@ Milestone A work is authenticated encrypted transport, remote endpoint policy,
 and separate-machine validation. GitHub Actions status could not be retrieved
 through the connected GitHub tool during this recovery; local validation is the
 evidence recorded here.
+
+## Mutual TLS and network endpoints (November 3)
+
+Implemented --bind for coordinators and --host for worker/client commands with
+numeric IPv4 endpoints. Non-loopback use requires mutual TLS 1.3 via OpenSSL 3.
+Clients verify the coordinator IP SAN and CA chain; coordinators require a trusted
+client certificate. TLS configuration is explicit and fails closed, with no
+plaintext fallback or verification bypass. Optional token admission runs inside
+TLS. See [network setup](network-setup.md) for exact commands and limits.
+
+Connection owns a socket and SSL object. Nonblocking TLS retries preserve an
+absolute frame deadline; handshakes have a separate three-second bound and run
+inside existing handler slots. The context outlives all coordinator handlers.
+The CLI ignores SIGPIPE for transport safety; child spawn attributes reset SIGPIPE
+to its normal disposition. A regression test confirms child signal exit 141.
+Encrypted key files are rejected without an interactive prompt.
+
+Final local validation: Ubuntu 24.04, GCC 13.3 Debug, OpenSSL 3.0.13; all seven
+CTest suites passed in 54.50 seconds. TLS coverage includes missing/untrusted or
+expired client certificates, wrong server trust/IP, certificate purpose, TLS 1.2
+rejection, partial-frame and client/server handshake deadlines, binary output and
+limits, execution timeout, retained logs, token admission, active-job worker loss,
+and remaining capacity. These durations are correctness-run timings.
+
+The final binary also passed scripts/test-container-cluster.py: coordinator,
+two workers, and CLI in four containers on one private Docker bridge. Concurrent
+jobs returned both expected worker container hostnames; ps/logs, plaintext rejection,
+worker-container loss, and subsequent execution on the remaining worker passed.
+The script removes its temporary containers and network. CI now includes OpenSSL
+installation, all CTest suites, and this Docker network test; remote CI results
+are not established by local runs.
+
+No physical-machine execution or scaling result is claimed. TLS certificates grant
+all operations; worker IDs are not bound to certificate subjects. Certificate
+revocation/rotation automation, roles, safer workload credentials, isolation,
+staging/map, and retries remain open. The concrete next validation step is the
+separate-Linux-machine checklist in network-setup.md, followed by workload staging.

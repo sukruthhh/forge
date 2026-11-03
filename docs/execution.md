@@ -67,10 +67,14 @@ is one reason worker-loss retries are not enabled. Processes deliberately escapi
 the group are outside this trusted-workload scope. Cgroups will provide stronger
 process-tree lifecycle control later.
 
-Optional shared-token authentication is available through FORGE_TOKEN; see [authentication.md](authentication.md). Environment filtering, namespaces, and cgroups do not exist yet.
+Optional shared-token authentication is available through FORGE_TOKEN; see
+[authentication.md](authentication.md). Non-loopback IPv4 connections require
+[mutual TLS](network-setup.md). Environment filtering, namespaces, and cgroups
+do not exist yet.
 Loopback is a development restriction, not authentication: local users able to
-connect can submit commands as the worker's user when FORGE_TOKEN is unset. Do not expose the listener
-remotely. Capability totals do not yet account for container resource limits.
+connect can submit commands as the worker's user when TLS and FORGE_TOKEN are unset.
+TLS certificate holders are trusted to submit commands. Capability totals do not
+yet account for container resource limits.
 
 ## Protocol extensions
 

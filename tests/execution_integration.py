@@ -63,6 +63,8 @@ try:
     result = run("/bin/sh", "-c", "printf stdout; printf stderr >&2; exit 7")
     require(result.returncode == 7 and result.stdout == b"stdout" and b"stderr" in result.stderr,
             "stdout, stderr, or nonzero exit lost")
+    require(run("/bin/sh", "-c", "kill -PIPE $$; exit 0").returncode == 141,
+            "worker SIGPIPE handling leaked into child execution")
     result = run("forge-nonexistent-executable")
     require(result.returncode == 127 and b"cannot execute" in result.stderr, "spawn error not returned")
     result = run("python3", "-c", "import sys; sys.stdout.write('x'*100000); sys.stderr.write('y'*100000)")

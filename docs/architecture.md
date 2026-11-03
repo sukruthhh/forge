@@ -77,3 +77,25 @@ authentication alone is insufficient for an exposed network. The token is sent
 unencrypted and all holders share permissions. Keep loopback binding until
 authenticated encrypted transport and remote endpoint policy are implemented.
 See [authentication.md](authentication.md) for operational limits and protocol.
+
+## 007: Mutual TLS before non-loopback endpoints
+
+Use OpenSSL 3 for TLS 1.3 with mandatory certificate verification on both sides.
+Clients validate the coordinator's IP SAN; the coordinator requires a trusted
+client certificate. Reuse the binary application protocol over a Connection that
+owns its socket and SSL object. Handler threads keep exclusive connection
+ownership, and the coordinator's immutable TLS context outlives all handlers.
+
+Keep existing frame deadlines across TLS retries and give connect and handshake
+separate three-second budgets. Perform handshakes in bounded handler slots, outside
+the registry lock. Numeric IPv4 endpoints avoid an unbounded DNS lookup step;
+hostnames and IPv6 remain future work. Fail incomplete TLS configuration before
+binding or connecting, and reject remote plaintext before opening a session.
+
+This dependency is justified by certificate verification and encrypted transport;
+Forge does not implement cryptography. Cluster certificates authorize all
+operations, rather than binding worker IDs to principals or adding roles yet.
+Optional token admission remains available inside TLS. See
+[network setup](network-setup.md) for credential handling, limits, and the pending
+physical-machine validation checklist. Earlier loopback decisions above describe
+the milestones that preceded this transport extension.

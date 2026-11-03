@@ -1,11 +1,13 @@
 #include "forge/runtime.hpp"
 #include <charconv>
+#include <csignal>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 
 int main(int argc, char** argv) {
+  std::signal(SIGPIPE, SIG_IGN);
   try {
     if (argc == 2 && std::string_view(argv[1]) == "--version") {
         std::cout << "forge 0.1.0-dev\n";
@@ -19,12 +21,16 @@ int main(int argc, char** argv) {
                      "  forge ps [--port 9000]\n"
                      "  forge logs JOB [--port 9000]\n\n"
                      "  forge run [--port 9000] [--cpu 1] [--memory 0] [--timeout 30] -- COMMAND [ARGS...]\n\n"
-                     "Loopback only; trusted commands, no sandbox. Set FORGE_TOKEN on all peers to require authentication.\n";
+                     "Network options: coordinator --bind IPv4; other commands --host IPv4 (default 127.0.0.1).\n"
+                     "Remote endpoints require FORGE_TLS_CA, FORGE_TLS_CERT, FORGE_TLS_KEY (mutual TLS).\n"
+                     "Trusted commands, no sandbox. Optional additional authentication: FORGE_TOKEN.\n";
         return 0;
     }
     const std::string_view command(argv[1]);
     std::uint16_t port = 9000;
     std::string id, log_id;
+    std::string endpoint = "127.0.0.1";
+    bool endpoint_seen = false;
     std::uint32_t cpu = 1, timeout = 30;
     std::uint64_t memory = 0;
     bool cpu_seen = false, memory_seen = false, timeout_seen = false;
@@ -51,6 +57,12 @@ int main(int argc, char** argv) {
                 throw std::runtime_error("port must be between 1 and 65535");
             port = static_cast<std::uint16_t>(parsed);
             port_seen = true;
+        } else if (!endpoint_seen && !value.empty() &&
+                   ((option == "--bind" && command == "coordinator") ||
+                    (option == "--host" && (command == "join" || command == "cluster" ||
+                        command == "ps" || command == "logs" || command == "run")))) {
+            endpoint = value;
+            endpoint_seen = true;
         } else if (option == "--id" && command == "join" && id.empty()) {
             id = value;
         } else if (command == "run" &&
@@ -68,12 +80,12 @@ int main(int argc, char** argv) {
             } else throw std::runtime_error("repeated or out-of-range job option");
         } else throw std::runtime_error("unknown or repeated option");
     }
-    if (command == "coordinator") return forge::coordinator(port);
-    if (command == "cluster") return forge::cluster(port);
-    if (command == "ps") return forge::ps(port);
-    if (command == "logs") return forge::logs(port, log_id);
-    if (command == "join" && !id.empty()) return forge::join(port, id);
-    if (command == "run" && !arguments.empty()) return forge::run(port, cpu, memory, timeout, arguments);
+    if (command == "coordinator") return forge::coordinator(port, endpoint);
+    if (command == "cluster") return forge::cluster(port, endpoint);
+    if (command == "ps") return forge::ps(port, endpoint);
+    if (command == "logs") return forge::logs(port, log_id, endpoint);
+    if (command == "join" && !id.empty()) return forge::join(port, id, endpoint);
+    if (command == "run" && !arguments.empty()) return forge::run(port, cpu, memory, timeout, arguments, endpoint);
     throw std::runtime_error("unsupported command; run forge --help");
   } catch (const std::exception& error) {
     std::cerr << "forge: " << error.what() << '\n';

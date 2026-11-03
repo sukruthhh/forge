@@ -1,7 +1,8 @@
 # TCP protocol v1: registration and liveness
 
-Implemented on Linux, loopback only. Optional shared-token authentication is
-described in [authentication.md](authentication.md); encryption is not implemented. Job submission
+Implemented on Linux. Plaintext is loopback-only; configurable IPv4 endpoints use
+mutual TLS 1.3 as described in [network-setup.md](network-setup.md). Optional shared-token
+admission is described in [authentication.md](authentication.md). Job submission
 and process execution are described in [execution.md](execution.md), which extends
 this registration/liveness protocol with message IDs 7..9.
 
@@ -25,6 +26,8 @@ out-of-range lengths are errors. Reads/writes handle fragmentation and coalescin
 Each receive shares one absolute monotonic deadline across header and body;
 receiving a few bytes does not reset it. Sending suppresses SIGPIPE and uses a
 deadline too. Connection attempts are limited to three seconds.
+TLS adds a separate three-second handshake deadline. Framing and application
+message IDs are identical inside TLS; no plaintext negotiation or fallback exists.
 
 ## Messages
 

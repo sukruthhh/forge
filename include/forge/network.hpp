@@ -2,7 +2,10 @@
 
 #include <chrono>
 #include <cstdint>
+#include <memory>
+#include <openssl/ssl.h>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace forge::net {
@@ -27,12 +30,25 @@ struct Message {
     Type type;
     std::vector<std::string> fields;
 };
+using TlsContext = std::shared_ptr<SSL_CTX>;
+TlsContext configured_tls();
+
+class Connection {
+public:
+    explicit Connection(Socket socket) : socket_(std::move(socket)) {}
+    void secure(const TlsContext&, bool server, const std::string& expected_ip = {});
+    int get() const { return socket_.get(); }
+    SSL* tls() const { return tls_.get(); }
+private:
+    Socket socket_;
+    std::unique_ptr<SSL, decltype(&SSL_free)> tls_{nullptr, SSL_free};
+};
 constexpr std::uint32_t max_frame = 65536;
 constexpr std::size_t max_fields = 1024;
 std::vector<std::uint8_t> encode(const Message&);
 Message decode(const std::vector<std::uint8_t>& payload);
-Socket listen_loopback(std::uint16_t port);
-Socket connect_loopback(std::uint16_t port);
-void send(int fd, const Message&, std::chrono::milliseconds timeout = std::chrono::seconds(3));
-Message receive(int fd, std::chrono::milliseconds timeout = std::chrono::seconds(3));
+Socket listen(std::uint16_t port, const std::string& bind, const TlsContext&);
+Connection connect(std::uint16_t port, const std::string& host, const TlsContext&);
+void send(Connection&, const Message&, std::chrono::milliseconds timeout = std::chrono::seconds(3));
+Message receive(Connection&, std::chrono::milliseconds timeout = std::chrono::seconds(3));
 }

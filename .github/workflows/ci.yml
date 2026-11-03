@@ -5,9 +5,15 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Install TLS dependencies
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev openssl
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
       - name: Build
         run: cmake --build build --parallel 2
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: Build network integration image
+        run: docker build -f Dockerfile.dev -t forge-dev .
+      - name: Test cluster over private Docker network
+        run: python3 scripts/test-container-cluster.py --binary build/forge

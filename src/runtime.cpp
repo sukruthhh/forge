@@ -68,12 +68,12 @@ bool token_matches(const std::string& expected, const std::string& supplied) {
         difference |= static_cast<unsigned char>(expected[i]) ^ static_cast<unsigned char>(supplied[i]);
     return difference == 0;
 }
-net::Socket connect_coordinator(std::uint16_t port) {
+net::Connection connect_coordinator(std::uint16_t port, const std::string& host) {
     const auto token = configured_token();
-    auto socket = net::connect_loopback(port);
+    auto socket = net::connect(port, host, net::configured_tls());
     if (!token.empty()) {
-        net::send(socket.get(), {Type::authenticate, {token}});
-        const auto response = net::receive(socket.get());
+        net::send(socket, {Type::authenticate, {token}});
+        const auto response = net::receive(socket);
         if (response.type != Type::ok || !response.fields.empty())
             throw std::runtime_error("coordinator authentication failed");
     }
@@ -141,7 +141,7 @@ void schedule(Registry& registry) {
         job->assigned_at = Clock::now();
     }
 }
-void submit(int fd, Registry& registry, const Message& message) {
+void submit(net::Connection& connection, Registry& registry, const Message& message) {
     const auto& fields = message.fields;
     if (fields.size() < 6 || fields.size() > 133 || fields[5].empty() ||
         fields[3] != "linux" || !label(fields[4]))
@@ -181,7 +181,7 @@ void submit(int fd, Registry& registry, const Message& message) {
         registry.history.push_back(job);
         if (registry.history.size() > 64) registry.history.pop_front();
     }
-    net::send(fd, job->completion);
+    net::send(connection, job->completion);
 }
 Message snapshot(Registry& registry) {
     std::lock_guard lock(registry.mutex);
@@ -232,27 +232,31 @@ Message inspect(Registry& registry, const Message& request) {
         if (job->id == id) return job->completion;
     return {Type::error, {id + ": unknown or evicted job (history is in memory only)"}};
 }
-void handle(net::Socket socket, Registry& registry, const std::string& token) {
+void handle(net::Socket peer, Registry& registry, const std::string& token, const net::TlsContext& tls) {
     std::string registered;
+    net::Connection socket(std::move(peer));
+    bool ready = false;
     try {
-        auto message = net::receive(socket.get());
+        socket.secure(tls, true);
+        ready = true;
+        auto message = net::receive(socket);
         if (!token.empty()) {
             if (message.type != Type::authenticate || message.fields.size() != 1 ||
                 !token_matches(token, message.fields[0]))
                 throw std::runtime_error("authentication required or invalid credential");
-            net::send(socket.get(), {Type::ok, {}});
-            message = net::receive(socket.get());
+            net::send(socket, {Type::ok, {}});
+            message = net::receive(socket);
         }
         if (message.type == Type::cluster && message.fields.empty()) {
-            net::send(socket.get(), snapshot(registry));
+            net::send(socket, snapshot(registry));
             return;
         }
         if (message.type == Type::jobs || message.type == Type::logs) {
-            net::send(socket.get(), inspect(registry, message));
+            net::send(socket, inspect(registry, message));
             return;
         }
         if (message.type == Type::submit) {
-            submit(socket.get(), registry, message);
+            submit(socket, registry, message);
             return;
         }
         if (message.type != Type::register_worker || message.fields.size() != 6)
@@ -273,9 +277,9 @@ void handle(net::Socket socket, Registry& registry, const std::string& token) {
             registry.workers.insert_or_assign(f[0], Record{f, Clock::now(), true, nullptr, {0, 0}});
             registered = f[0];
         }
-        net::send(socket.get(), {Type::ok, {}});
+        net::send(socket, {Type::ok, {}});
         while (!stopped) {
-            message = net::receive(socket.get(), std::chrono::seconds(2));
+            message = net::receive(socket, std::chrono::seconds(2));
             Message reply{Type::ok, {}};
             {
                 std::lock_guard lock(registry.mutex);
@@ -304,10 +308,10 @@ void handle(net::Socket socket, Registry& registry, const std::string& token) {
                     job.state = "RUNNING";
                 }
             }
-            net::send(socket.get(), reply);
+            net::send(socket, reply);
         }
     } catch (const std::exception& error) {
-        try { net::send(socket.get(), {Type::error, {error.what()}}, std::chrono::milliseconds(100)); }
+        try { if (ready) net::send(socket, {Type::error, {error.what()}}, std::chrono::milliseconds(100)); }
         catch (...) {} // A disconnected client must not terminate the server.
     }
     if (!registered.empty()) {
@@ -326,16 +330,17 @@ void expect_ok(const Message& message) {
 }
 }
 
-int coordinator(std::uint16_t port) {
+int coordinator(std::uint16_t port, const std::string& bind) {
     const auto token = configured_token();
     install_signals();
-    auto listener = net::listen_loopback(port);
+    const auto tls = net::configured_tls();
+    auto listener = net::listen(port, bind, tls);
     Registry registry;
     struct Slot { std::atomic<bool> done{true}; std::jthread thread; };
     // Fixed slots bound threads and retained thread objects. Destruction joins
     // every handler before registry destruction.
     std::array<Slot, 96> slots;
-    std::cout << "Coordinator listening on 127.0.0.1:" << port << std::endl;
+    std::cout << "Coordinator listening on " << bind << ":" << port << (tls ? " (mutual TLS)" : " (plaintext loopback)") << std::endl;
     while (!stopped) {
         pollfd p{listener.get(), POLLIN, 0};
         const int ready = ::poll(&p, 1, 100);
@@ -345,15 +350,15 @@ int coordinator(std::uint16_t port) {
             throw std::runtime_error("accept poll failed");
         }
         if (ready == 0) continue;
-        net::Socket peer(::accept4(listener.get(), nullptr, nullptr, SOCK_CLOEXEC));
+        net::Socket peer(::accept4(listener.get(), nullptr, nullptr, SOCK_CLOEXEC | SOCK_NONBLOCK));
         if (peer.get() < 0) continue;
         auto slot = std::find_if(slots.begin(), slots.end(), [](const Slot& s) { return s.done.load(); });
         if (slot == slots.end()) continue;
         if (slot->thread.joinable()) slot->thread.join();
         slot->done = false;
         try {
-            slot->thread = std::jthread([socket = std::move(peer), &registry, &token, &done = slot->done]() mutable {
-                handle(std::move(socket), registry, token);
+            slot->thread = std::jthread([socket = std::move(peer), &registry, &token, &tls, &done = slot->done]() mutable {
+                handle(std::move(socket), registry, token, tls);
                 done = true;
             });
         } catch (...) {
@@ -364,7 +369,7 @@ int coordinator(std::uint16_t port) {
     return 0;
 }
 
-int join(std::uint16_t port, const std::string& id) {
+int join(std::uint16_t port, const std::string& id, const std::string& host) {
     if (!label(id)) throw std::runtime_error("worker ID must be 1-64 letters, digits, dots, underscores or hyphens");
     install_signals();
     utsname system{};
@@ -372,11 +377,11 @@ int join(std::uint16_t port, const std::string& id) {
     const auto cpus = ::sysconf(_SC_NPROCESSORS_ONLN);
     if (::uname(&system) != 0 || ::sysinfo(&memory) != 0 || cpus <= 0)
         throw std::runtime_error("capability discovery failed");
-    auto socket = connect_coordinator(port);
-    net::send(socket.get(), {Type::register_worker,
+    auto socket = connect_coordinator(port, host);
+    net::send(socket, {Type::register_worker,
         {id, "linux", system.machine, std::to_string(cpus),
          std::to_string(static_cast<std::uint64_t>(memory.totalram) * memory.mem_unit), "0"}});
-    expect_ok(net::receive(socket.get()));
+    expect_ok(net::receive(socket));
     std::cout << "Worker " << id << " registered" << std::endl;
     std::atomic<bool> cancel{false};
     std::future<ExecutionResult> execution;
@@ -390,13 +395,13 @@ int join(std::uint16_t port, const std::string& id) {
             ExecutionResult result;
             try { result = execution.get(); }
             catch (const std::exception& error) { result.error = error.what(); }
-            net::send(socket.get(), {Type::result, {job_id, std::to_string(result.exit_code),
+            net::send(socket, {Type::result, {job_id, std::to_string(result.exit_code),
                 result.output, result.error, result.timed_out ? "1" : "0", result.truncated ? "1" : "0"}});
-            expect_ok(net::receive(socket.get()));
+            expect_ok(net::receive(socket));
             job_id.clear();
         }
-        net::send(socket.get(), {Type::heartbeat, {}});
-        auto response = net::receive(socket.get());
+        net::send(socket, {Type::heartbeat, {}});
+        auto response = net::receive(socket);
         if (response.type == Type::assignment) {
             if (execution.valid() || response.fields.size() < 3 || response.fields.size() > 130 ||
                 !label(response.fields[0])) throw std::runtime_error("invalid assignment");
@@ -412,10 +417,10 @@ int join(std::uint16_t port, const std::string& id) {
     return 0;
 }
 
-int cluster(std::uint16_t port) {
-    auto socket = connect_coordinator(port);
-    net::send(socket.get(), {Type::cluster, {}});
-    auto result = net::receive(socket.get());
+int cluster(std::uint16_t port, const std::string& host) {
+    auto socket = connect_coordinator(port, host);
+    net::send(socket, {Type::cluster, {}});
+    auto result = net::receive(socket);
     if (result.type != Type::snapshot || result.fields.size() % 7 != 0)
         throw std::runtime_error("invalid cluster snapshot");
     std::cout << "ID\tOS\tARCH\tCPU\tRAM_BYTES\tCUDA\tSTATE\n";
@@ -424,10 +429,10 @@ int cluster(std::uint16_t port) {
     return 0;
 }
 
-int ps(std::uint16_t port) {
-    auto socket = connect_coordinator(port);
-    net::send(socket.get(), {Type::jobs, {}});
-    auto response = net::receive(socket.get());
+int ps(std::uint16_t port, const std::string& host) {
+    auto socket = connect_coordinator(port, host);
+    net::send(socket, {Type::jobs, {}});
+    auto response = net::receive(socket);
     if (response.type != Type::job_list || response.fields.size() % 5 != 0)
         throw std::runtime_error("invalid job list");
     std::cout << "ID\tSTATE\tWORKER\tEXIT\tCOMMAND\n";
@@ -435,10 +440,10 @@ int ps(std::uint16_t port) {
         std::cout << response.fields[i] << ((i + 1) % 5 == 0 ? '\n' : '\t');
     return 0;
 }
-int logs(std::uint16_t port, const std::string& id) {
-    auto socket = connect_coordinator(port);
-    net::send(socket.get(), {Type::logs, {id}});
-    auto response = net::receive(socket.get());
+int logs(std::uint16_t port, const std::string& id, const std::string& host) {
+    auto socket = connect_coordinator(port, host);
+    net::send(socket, {Type::logs, {id}});
+    auto response = net::receive(socket);
     if (response.type == Type::error && response.fields.size() == 1)
         throw std::runtime_error(response.fields[0]);
     if (response.type != Type::result || response.fields.size() != 6)
@@ -452,15 +457,15 @@ int logs(std::uint16_t port, const std::string& id) {
 }
 
 int run(std::uint16_t port, std::uint32_t cpu, std::uint64_t memory,
-        std::uint32_t timeout, const std::vector<std::string>& arguments) {
+        std::uint32_t timeout, const std::vector<std::string>& arguments, const std::string& host) {
     utsname system{};
     if (::uname(&system) != 0) throw std::runtime_error("architecture discovery failed");
     Message request{Type::submit, {std::to_string(cpu), std::to_string(memory),
         std::to_string(timeout), "linux", system.machine}};
     request.fields.insert(request.fields.end(), arguments.begin(), arguments.end());
-    auto socket = connect_coordinator(port);
-    net::send(socket.get(), request);
-    auto result = net::receive(socket.get(), std::chrono::seconds(45));
+    auto socket = connect_coordinator(port, host);
+    net::send(socket, request);
+    auto result = net::receive(socket, std::chrono::seconds(45));
     if (result.type == Type::error && result.fields.size() == 1)
         throw std::runtime_error(result.fields.front());
     if (result.type != Type::result || result.fields.size() != 6 || number(result.fields[1]) > 255)

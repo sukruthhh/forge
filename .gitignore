@@ -2,3 +2,5 @@
 /.cache/
 /.devcontainer/.env
 *.log
+__pycache__/
+*.key
