@@ -11,6 +11,7 @@ struct TaskRequest {
     std::string architecture = "native";
     std::vector<std::string> arguments;
     std::vector<InputFile> files;
+    std::uint32_t retries = 0;
 };
 struct TaskResult {
     std::string job_id;
@@ -30,6 +31,7 @@ int cluster(std::uint16_t port, const std::string& host);
 int ps(std::uint16_t port, const std::string& host);
 int logs(std::uint16_t port, const std::string& id, const std::string& host);
 int timings(std::uint16_t port, const std::string& id, const std::string& host);
+int attempts(std::uint16_t port, const std::string& id, const std::string& host);
 int run(std::uint16_t port, const std::string& host, const TaskRequest&);
 int map(std::uint16_t port, const std::string& host, const TaskRequest&,
         const std::vector<std::string>& inputs, std::size_t concurrency, const std::string& output);

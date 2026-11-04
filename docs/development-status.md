@@ -56,20 +56,28 @@ scaling, representative workloads and fault recovery metrics remain unverified.
 |---|---|
 | A: actual cross-machine execution | TLS execution on separate physical Linux machines; record command origin, failures, and results |
 | B: useful distributed batch workloads | Flat staging and map now work; larger transfers, richer dependency packaging, output-file retrieval, and real-workload physical-machine validation remain |
-| C: fault tolerance | Attempt identity, lost-worker requeue policy, bounded retries, stale-result rejection, explicit at-least-once semantics and side-effect risks |
+| C: fault tolerance | Opt-in bounded worker-loss retries, attempt identity/history, stale-result fencing and at-least-once semantics are implemented; persistence, restart recovery, worker reconnect, broader fault injection and recovery-time measurements remain |
 | D: Linux isolation | Namespaces/cgroups v2, enforced CPU/RAM limits, cancellation and descendant cleanup, tested failure behavior and documented security boundaries |
 | E: product quality | Practical installation/onboarding, reproducible real-workload benchmarks, meaningful CI/integration coverage, clear documentation, independent user feedback |
 
+November 4 recovery validation: twelve Release suites passed (100.65 seconds).
+The full Debug suite passed (96.91 seconds), with final execution/recovery checks
+after the shutdown fix (28.72 seconds). The final Release four-container TLS test
+passed active-job failover and attempt history. These are correctness checks;
+no recovery-time metric or physical-machine failure evidence is claimed.
+
 CPU/RAM reservations are not enforced limits. Workers currently execute one job
 at a time and report system capacity without cgroup/affinity adjustment. There is
-no general dependency packaging, retry/cancellation API, isolation, or persistent job history.
+no general dependency packaging, cancellation API, isolation, or persistent job history.
+Worker-loss retries are explicit opt-in; see [recovery.md](recovery.md).
 GPU discovery/execution and a native macOS backend remain future capabilities.
 
 ## Physical test fleet: preparation pending
 
 The intended fleet is the Windows PC, Windows laptop, and M3 MacBook Air. The user
-reported installing Ubuntu on the laptop. The PC's reported WSL list contained
-docker-desktop only, so its Ubuntu distribution still needs confirmation/setup.
+reported installing Ubuntu on the laptop. On November 4 the PC's WSL inventory
+also listed Ubuntu (stopped) alongside docker-desktop; native Ubuntu build/network
+setup and physical-machine execution have not been verified.
 The Mac needs an ARM64 Linux VM; on November 3 the user deferred that setup and
 asked to continue code development. Bring it up when physical-machine validation
 resumes; it is not a completed test or an automatically scheduled reminder.

@@ -93,7 +93,9 @@ int map(std::uint16_t port, const std::string& host, const TaskRequest& base,
         entries.push_back(std::move(entry));
     }
     const auto workers = staging_worker_count(port, host, base);
-    if (workers == 0) throw std::runtime_error("no compatible idle READY workers advertise staging-v1");
+    if (workers == 0) throw std::runtime_error(base.retries == 0 ?
+        "no compatible idle READY workers advertise staging-v1" :
+        "no compatible idle READY workers advertise staging-v1 and attempt-v1");
     concurrency = std::min({concurrency, workers, entries.size()});
     if (::mkdir(output.c_str(), 0700) != 0)
         throw std::runtime_error("cannot create output directory; it must not already exist and its parent must exist");

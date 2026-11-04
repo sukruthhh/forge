@@ -21,11 +21,13 @@ int main(int argc, char** argv) {
                      "  forge ps [--port 9000]\n"
                      "  forge logs JOB [--port 9000]\n\n"
                      "  forge timings JOB [--port 9000]\n\n"
+                     "  forge attempts JOB [--port 9000]\n\n"
                      "  forge run [--port 9000] [--cpu 1] [--memory 0] [--timeout 30] [--arch native|any|ARCH] -- COMMAND [ARGS...]\n\n"
                      "  forge run [OPTIONS] [--file PATH]... -- COMMAND [ARGS...]\n"
                      "  forge map [OPTIONS] [--file SHARED]... [--jobs 16] [--output DIR] INPUT... -- COMMAND {}\n\n"
                      "Staging: at most 16 flat files and 32768 data bytes per task; no dependency installation.\n"
                      "Map: at most 256 inputs; output directory must be new; jobs is a parallelism cap.\n"
+                     "Run/map --retries 0..3: retry worker loss only (default 0); commands can execute more than once.\n"
                      "Network options: coordinator --bind IPv4; other commands --host IPv4 (default 127.0.0.1).\n"
                      "Remote endpoints require FORGE_TLS_CA, FORGE_TLS_CERT, FORGE_TLS_KEY (mutual TLS).\n"
                      "Architecture defaults to native. Use any only when the command and dependencies support every eligible worker.\n"
@@ -39,16 +41,16 @@ int main(int argc, char** argv) {
     std::string architecture = "native";
     bool architecture_seen = false;
     bool endpoint_seen = false;
-    std::uint32_t cpu = 1, timeout = 30;
+    std::uint32_t cpu = 1, timeout = 30, retries = 0;
     std::uint64_t memory = 0;
-    bool cpu_seen = false, memory_seen = false, timeout_seen = false;
+    bool cpu_seen = false, memory_seen = false, timeout_seen = false, retries_seen = false;
     std::vector<std::string> arguments, files, inputs;
     std::size_t concurrency = 16;
     std::string output = "forge-map-results";
     bool concurrency_seen = false, output_seen = false;
     bool port_seen = false;
     int first_option = 2;
-    if (command == "logs" || command == "timings") {
+    if (command == "logs" || command == "timings" || command == "attempts") {
         if (argc < 3) throw std::runtime_error("inspection requires a job ID");
         log_id = argv[2];
         first_option = 3;
@@ -75,7 +77,8 @@ int main(int argc, char** argv) {
         } else if (!endpoint_seen && !value.empty() &&
                    ((option == "--bind" && command == "coordinator") ||
                     (option == "--host" && (command == "join" || command == "cluster" ||
-                        command == "ps" || command == "logs" || command == "timings" || command == "run" || command == "map")))) {
+                        command == "ps" || command == "logs" || command == "timings" || command == "attempts" ||
+                        command == "run" || command == "map")))) {
             endpoint = value;
             endpoint_seen = true;
         } else if (option == "--arch" && (command == "run" || command == "map") && !architecture_seen) {
@@ -96,7 +99,7 @@ int main(int argc, char** argv) {
         } else if (option == "--id" && command == "join" && id.empty()) {
             id = value;
         } else if ((command == "run" || command == "map") &&
-                   (option == "--cpu" || option == "--memory" || option == "--timeout")) {
+                   (option == "--cpu" || option == "--memory" || option == "--timeout" || option == "--retries")) {
             std::uint64_t parsed = 0;
             const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
             if (error != std::errc{} || end != value.data() + value.size())
@@ -107,6 +110,8 @@ int main(int argc, char** argv) {
                 memory = parsed; memory_seen = true;
             } else if (option == "--timeout" && !timeout_seen && parsed > 0 && parsed <= 30) {
                 timeout = static_cast<std::uint32_t>(parsed); timeout_seen = true;
+            } else if (option == "--retries" && !retries_seen && parsed <= 3) {
+                retries = static_cast<std::uint32_t>(parsed); retries_seen = true;
             } else throw std::runtime_error("repeated or out-of-range job option");
         } else throw std::runtime_error("unknown or repeated option");
     }
@@ -115,9 +120,10 @@ int main(int argc, char** argv) {
     if (command == "ps") return forge::ps(port, endpoint);
     if (command == "logs") return forge::logs(port, log_id, endpoint);
     if (command == "timings") return forge::timings(port, log_id, endpoint);
+    if (command == "attempts") return forge::attempts(port, log_id, endpoint);
     if (command == "join" && !id.empty()) return forge::join(port, id, endpoint);
     if ((command == "run" || command == "map") && !arguments.empty()) {
-        forge::TaskRequest task{cpu, memory, timeout, architecture, arguments, forge::read_inputs(files)};
+        forge::TaskRequest task{cpu, memory, timeout, architecture, arguments, forge::read_inputs(files), retries};
         if (command == "run") return forge::run(port, endpoint, task);
         return forge::map(port, endpoint, task, inputs, concurrency, output);
     }

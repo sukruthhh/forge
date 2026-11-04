@@ -98,7 +98,8 @@ The CLI ignores SIGPIPE to survive a closed TLS peer; spawned commands explicitl
 restore default SIGPIPE behavior. Connection destruction frees TLS state and
 closes TCP without waiting for a TLS close-notify exchange. A close or truncated
 frame is an error; TLS close is not a successful job-completion marker. Jobs still
-need an entire validated RESULT frame. No automatic retry is introduced.
+need an entire validated RESULT frame. Transport itself never resubmits work;
+explicit coordinator worker-loss retries are described in [recovery.md](recovery.md).
 
 See the [OpenSSL nonblocking guide](https://docs.openssl.org/3.2/man7/ossl-guide-tls-client-non-block/)
 for the WANT_READ/WANT_WRITE retry contract used by the transport.
@@ -134,5 +135,6 @@ local results do not establish the remote workflow's status.
    eligible workers. Use concurrent jobs to exercise both workers.
 5. Verify wrong trust, missing client credentials, and mismatched IP SAN are rejected.
 6. Inspect jobs/logs, run a timeout, and disconnect a worker during an active job.
-   Confirm LOST without retries, then verify remaining/replacement capacity.
+   Confirm LOST with retries disabled, then repeat with an explicitly retry-safe
+   job and --retries 1; inspect its LOST/SUCCEEDED attempts on surviving capacity.
 7. Save actual commands and results before claiming physical-machine execution.

@@ -25,6 +25,12 @@ dispatch/completion waits. This used one Docker host; current performance was
 approximately level with direct local parallel execution. Raw trials and
 limitations are included. Physical-machine scaling remains unverified.
 
+`forge run --retries N` and `forge map --retries N` opt into bounded worker-loss
+recovery (0--3 additional attempts; default 0). `forge attempts JOB` shows each
+dispatch and outcome. Command failures/timeouts stay terminal. A lost process can
+survive and repeat external side effects, so only opt in when repetition is
+acceptable. See [recovery semantics](docs/recovery.md) before enabling retries.
+
 See [the canonical framework](docs/canonical-framework.md) and
 [architecture decisions](docs/architecture.md).
 
@@ -106,7 +112,7 @@ need Python 3 installed. The sample data demonstrates the workflow; it is not a
 performance benchmark. Use --host with the existing TLS environment for remote
 endpoints. See [batch workloads](docs/batch-workloads.md) for limits and semantics:
 16 flat files / 32 KiB per task, 256 inputs per batch, up to 16 in-flight tasks,
-no automatic retries, and a new output directory for each invocation.
+no retries by default, and a new output directory for each invocation.
 
 ## Test a networked cluster locally
 

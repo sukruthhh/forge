@@ -21,7 +21,7 @@ repeated fields:
 ```
 
 Fields are binary-safe at the framing layer. Schema validation applies separately.
-Unknown versions/types (outside 1..20), excess fields, trailing bytes, truncated fields, and
+Unknown versions/types (outside 1..30), excess fields, trailing bytes, truncated fields, and
 out-of-range lengths are errors. Reads/writes handle fragmentation and coalescing.
 Each receive shares one absolute monotonic deadline across header and body;
 receiving a few bytes does not reset it. Sending suppresses SIGPIPE and uses a
@@ -33,7 +33,7 @@ message IDs are identical inside TLS; no plaintext negotiation or fallback exist
 
 | ID | Name | Fields |
 |---|---|---|
-| 1 | REGISTER | ID, OS, architecture, CPU decimal, RAM bytes decimal, CUDA `0`/`1`; optional ordered extensions `staging-v1`, `longpoll-v1`, `timing-v1` |
+| 1 | REGISTER | ID, OS, architecture, CPU decimal, RAM bytes decimal, CUDA `0`/`1`; optional ordered extensions `staging-v1`, `longpoll-v1`, `timing-v1`, `attempt-v1` |
 | 2 | HEARTBEAT | None; belongs to the registered connection |
 | 3 | CLUSTER | None; first message on a separate client connection |
 | 4 | OK | None |
@@ -62,7 +62,8 @@ Any unexpected message is rejected. There is no automatic reconnect loop yet.
 Snapshot states use elapsed time since registration or the last valid heartbeat:
 READY below one second, SUSPECT from one to two seconds, DEAD at two seconds or
 after session disconnect. Status is calculated when inspecting the registry;
-heartbeats also drive scheduling, but no automatic job recovery exists. Disconnect cleanup marks the record
+heartbeats also drive scheduling. Worker-loss recovery requires explicit retry
+eligibility; see [recovery.md](recovery.md). Disconnect cleanup marks the record
 disconnected. Duplicate connected IDs are rejected even if their heartbeat has
 expired until the old handler closes, preventing stale cleanup from corrupting
 the replacement. Disconnected IDs may reconnect.
@@ -112,11 +113,12 @@ all new application requests. See [batch workloads](batch-workloads.md).
 
 ## Immediate dispatch and phase inspection
 
-Registration accepts six through nine fields. Extensions occupy exact positions:
-seventh staging-v1, eighth longpoll-v1, ninth timing-v1. Six/seven-field workers
+Registration accepts six through ten fields. Extensions occupy exact positions:
+seventh staging-v1, eighth longpoll-v1, ninth timing-v1, tenth attempt-v1. Six/seven-field workers
 retain immediate heartbeat replies and ordinary RESULT messages. Eight-field
 workers use held idle heartbeats with ordinary results. Nine-field workers must
-send PROFILED_RESULT. The stock worker advertises all three extensions and requires
+send PROFILED_RESULT. Ten-field workers send ATTEMPT_RESULT instead. The stock
+worker advertises all four extensions and requires
 an updated coordinator; there is no fallback to an older coordinator.
 
 | ID | Name | Fields |
@@ -141,3 +143,36 @@ connection thread. Result wait excludes socket write/ACK time. Worker values are
 reported telemetry, not independently authenticated execution evidence. Clocks
 are never subtracted across hosts. Intervals overlap and cannot all be summed;
 these do not measure one-way network latency or isolate pure scheduling cost.
+
+## Opt-in recovery and attempt identity
+
+| ID | Name | Fields |
+|---|---|---|
+| 21 | RETRY_SUBMIT | CPU, RAM, timeout, OS, architecture, retries, argv |
+| 22 | RETRY_STAGED_SUBMIT | CPU, RAM, timeout, OS, architecture, retries, file count, file triples, argv |
+| 23 | ATTEMPT_ASSIGNMENT | Job ID, attempt, timeout, argv |
+| 24 | ATTEMPT_STAGED_ASSIGNMENT | Job ID, attempt, timeout, file count, file triples, argv |
+| 25 | ATTEMPT_RESULT | Job ID, attempt, exit, stdout, stderr, timeout flag, truncation flag, four worker phase durations |
+| 26 | ATTEMPTS | One job ID; authenticated inspection request |
+| 27 | ATTEMPT_SNAPSHOT | Job ID, job state, maximum attempts, then repeated six-field rows: attempt, worker, attempt state, exit or '-', elapsed microseconds or empty, diagnostic |
+| 28 | RETRY_CAPABILITIES | None; authenticated capability request |
+| 29 | RETRY_CAPABILITY_SNAPSHOT | Repeated nine-field groups: six worker capabilities, state, staging feature or empty, attempt feature or empty |
+| 30 | JOB_ERROR | Job ID, diagnostic; terminal infrastructure failure for a retry-enabled admitted job |
+
+Retries are 1..3 on types 21/22; zero uses the existing types 7/14. Attempts are
+1..4. Other resource, file, argv and frame bounds are unchanged. Admission checks
+the largest possible assignment, including its attempt field, even for ordinary
+jobs that may be dispatched to an attempt-capable worker. Type 17's eight-field
+schema and type 5's seven-field schema remain unchanged. Retry-capable workers
+receive types 23/24 for every job, including jobs with retries disabled. Older
+workers receive their previously negotiated assignments/results and cannot be
+selected for retry-enabled jobs.
+
+Type 25 requires the matching job ID, current attempt and owning RUNNING session.
+The coordinator validates phase durations as in type 20, then normalizes accepted
+results to type 9 for client delivery and retained logs. Type 30 preserves job
+identity on retry exhaustion/queue expiry; rejected submissions still return
+ordinary ERROR without inventing an admitted job. Attempts are retained with
+active jobs and the latest 64 finalized results, not persisted across restart.
+See [recovery.md](recovery.md) for transition rules, time budgets and at-least-once
+execution semantics, including possible overlapping processes and side effects.

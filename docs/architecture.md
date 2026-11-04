@@ -180,3 +180,26 @@ null. Normalize extended worker results to the original client/log schema.
 Reported worker durations are telemetry, not proof; clocks are not subtracted
 across hosts and overlapping intervals cannot be summed. Compare complete old/new
 runtimes in shuffled rounds before claiming improvement. See [protocol.md](protocol.md).
+
+## 012: Explicit retry eligibility with session-owned numbered attempts
+
+Keep retries off by default. --retries 1..3 permits additional dispatches after
+worker-session loss, not command failures, timeouts, client submission uncertainty
+or result-storage errors. Retain immutable staged inputs until the logical job
+is finalized, then clear them before bounded history retention.
+
+Separate the logical job from up to four attempt records. The registry mutex
+protects attempt creation, reservation, result acceptance, loss/requeue and budget
+accounting. Retire the old session before releasing its reservation and scheduling
+replacement capacity. Each dispatch increments the attempt under the stable job
+ID; each queue admission has a five-second placement budget. Shutdown never starts
+another attempt. Require attempt-v1 for retryable placement and carry job/attempt
+identity on all assignments/results to those workers. Only the owning RUNNING
+session can complete the current attempt. Preserve legacy workers and existing
+client result/ps schemas; extend capability discovery and inspection separately.
+
+This fences coordinator state, not external side effects. An old process can
+survive a killed or partitioned worker and overlap its replacement. At-least-once
+semantics require explicit caller opt-in. Bounded in-memory retries do not establish
+durability or guarantee success. Recovery tests demonstrate repeated effects and
+surviving children. See [recovery.md](recovery.md) for the contract and open work.

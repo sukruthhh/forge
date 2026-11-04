@@ -229,34 +229,36 @@ CTest. Ninja is a build executor; GCC is the compiler. These are different roles
 Workers send heartbeats about every 500 ms. Snapshot inspection marks one second
 without contact SUSPECT and two seconds DEAD; disconnects also mark DEAD. The
 registered session has a two-second receive deadline. This is inspection/session
-cleanup, not a rescheduling loop. Duplicate connected IDs are rejected; a closed
+cleanup; opted-in jobs can be requeued on session loss. Duplicate connected IDs are rejected; a closed
 session's ID can reconnect. There is no automatic worker reconnect yet.
 
 Current active states are QUEUED, ASSIGNED, RUNNING. Terminal states are SUCCEEDED,
 FAILED, TIMED_OUT, LOST, UNSCHEDULABLE, and CANCELLED. A terminal response carries
 exit status or an infrastructure error. RUNNING means assignment is being sent,
-not an acknowledged successful exec. There are no retries, attempt IDs, durable
-history, or cancellation API yet. Completed results are retained in memory for 64 jobs. Worker loss fails the job without reassignment.
+not an acknowledged successful exec. Numbered attempts and opt-in bounded retries
+are implemented; durable history and a cancellation API remain open. Completed
+results are retained in memory for 64 jobs. By default worker loss fails without
+reassignment; --retries 1..3 permits additional worker-loss attempts.
 
 Heartbeats provide evidence of recent contact. A missed heartbeat may indicate a
 network partition or overload rather than process death. Use monotonic elapsed
 time for local timeouts and distinguish suspicion from declaring a worker lost.
 Shorter timeouts detect some failures sooner but increase false suspicions.
 
-In the future, eligible lost-worker jobs may be requeued with a bounded retry budget.
-The coordinator must reject late results from superseded attempts and release
-reservations exactly once for the accepted transition. Late or duplicate messages
-must not double-release resources or overwrite a newer result.
+Eligible lost-worker jobs now requeue within an explicit bounded retry budget.
+The coordinator rejects stale attempt results and releases reservations under the
+registry mutex. Late or duplicate messages cannot overwrite an accepted result.
 
 **Does this guarantee exactly-once execution?** No. A partitioned worker may keep
 running while another attempt starts. Attempt IDs protect coordinator bookkeeping
 but cannot undo repeated external side effects. Initially target retry-safe jobs;
 external writes need idempotency or stronger application-level coordination.
 
-**Does a failed command always get retried?** No retries exist yet. Future policy must separate
-infrastructure loss from a deterministic application error. Infinite retries would
-hide bugs and waste resources. Cancellation must also prevent queued retries and
-eventually terminate the relevant child process tree.
+**Does a failed command always get retried?** No. Only opted-in worker-session loss
+permits another attempt. Command failures, setup/launch errors and execution
+timeouts stay terminal. Retry count is at most three additional attempts, and
+coordinator shutdown prevents further dispatch. A cancellation API and stronger
+process-tree enforcement remain open.
 
 ## 8. Execution implemented; isolation and security planned
 
@@ -514,9 +516,9 @@ are not established by local runs.
 
 No physical-machine execution or scaling result is claimed. TLS certificates grant
 all operations; worker IDs are not bound to certificate subjects. Certificate
-revocation/rotation automation, roles, safer workload credentials, isolation,
-staging/map, and retries remain open. The concrete next validation step is the
-separate-Linux-machine checklist in network-setup.md, followed by workload staging.
+revocation/rotation automation, roles, safer workload credentials and isolation
+remain open. Staging/map and bounded opt-in retries were added in subsequent
+milestones below. Physical validation still follows network-setup.md.
 
 ## Explicit workload architecture (November 3)
 
@@ -715,3 +717,62 @@ by replacing periodic worker polling with condition-variable dispatch and
 completion wakeups." Broader distributed-performance claims require physical
 tests and real workloads. All raw samples, background-load and CRLF provenance
 caveats remain in the report; independent arithmetic and digest checks passed.
+
+## Worker-loss recovery and attempt tracking (November 4)
+
+run/map --retries 0..3 controls additional worker-loss attempts; zero is the
+default. A stable logical job ID owns up to four numbered dispatch records.
+Reservation creates an attempt with worker identity and state, not proof of exec.
+Retryable placement requires attempt-v1, plus staging-v1 for staged tasks. Older
+workers remain usable for ordinary jobs. The registry lock covers reservation,
+attempt creation, loss/requeue, retry accounting and result acceptance.
+
+On session loss the coordinator marks the attempt LOST, retires the worker and
+releases its reservation before scheduling replacement capacity. Admission-time
+staged bytes remain immutable in job memory and each attempt uses a fresh workspace.
+Requeue resets its five-second capacity wait. Exhaustion yields LOST; no replacement
+capacity yields UNSCHEDULABLE. Command failures and explicit timeouts stay terminal.
+Shutdown cancels without retrying. Clients do not resubmit unknown outcomes or
+failed result writes.
+
+New wire messages carry job ID and attempt number. Only the current owning RUNNING
+session can complete that attempt. Stale attempts, wrong jobs, duplicates and
+unnegotiated result schemas reject the session instead of overwriting accepted
+output. Reusing a retired worker ID does not reset the attempt counter. A rejected
+session counts as worker loss and remains subject to the same bounded policy.
+
+forge attempts JOB displays each worker/state, exit if known, reservation-to-end
+duration and diagnostic. It uses the same authentication, active-job registry and
+latest-64 finalized-job retention. Ordinary ps/result/log schemas remain; logs
+show only final accepted output. Retry-enabled infrastructure failures retain
+the admitted job ID in map ERROR records without inventing a command exit.
+timings describes the current/last assigned attempt, not whole-job latency over
+retries; client elapsed time includes all queue waits and attempts.
+
+The key distinction is result fencing versus process termination. SIGKILL or a
+partition can leave an old child running after a replacement starts. At-least-once
+semantics allow repeated side effects; bounded retries guarantee neither execution
+nor success. The test observes a surviving first child and two external writes,
+then cleans up only its owned process group/workspace. Exactly-once execution,
+durable coordinator recovery, automatic reconnect, namespaces and cgroups remain
+unimplemented. Only opt in when repetition is acceptable.
+
+Coverage includes default loss, all four permitted attempts, exhaustion, unavailable
+capacity, legacy gating, invalid retry options, reused IDs, stale-result rejection,
+receive expiry, retained logs, structured map failure and shutdown. Real staged-map
+recovery verifies the replacement receives admission-time bytes after source-file
+mutation. Command exit 7, launch exit 127 and timeout 124 stay terminal with retries
+enabled. The four-container mutual-TLS fixture stops the running job's worker and
+verifies completion plus LOST/SUCCEEDED history on the survivor. These are one-host
+correctness checks, not physical-failure or recovery-time measurements. Full policy
+and protocol details are in [recovery.md](recovery.md).
+
+The 75.81% benchmark remains evidence for source c0491fb against bdde513 in its
+immutable report. It has not been remeasured for this extension; no new latency,
+recovery-time, utilization or scaling number is claimed from test duration.
+
+Local validation passed all twelve Release suites (100.65 seconds). The full
+Debug suite passed (96.91 seconds), followed by final Debug execution/recovery
+checks after tightening shutdown (28.72 seconds). The final Release binary also
+passed the four-container mutual-TLS fixture with active-job recovery and attempt
+inspection. CI runs the full Debug/Release matrix and the Release bridge test.

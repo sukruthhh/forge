@@ -93,8 +93,9 @@ rejects missing/invalid timing data rather than estimating it from output order.
 The CLI reports per-task completion on stderr and a final table on stdout. It
 returns 0 only if all tasks succeed and results are stored; otherwise 1. A command
 failure retains its own exit code in the manifest. Infrastructure errors have no
-invented command exit code or job ID; the diagnostic may contain the coordinator's
-ID. States are SUCCEEDED, FAILED, TIMED_OUT, ERROR, and NOT_SUBMITTED. The last is
+invented command exit code. Retry-enabled admitted jobs retain a structured job ID
+on infrastructure failure; older error responses may identify it only in the
+diagnostic. States are SUCCEEDED, FAILED, TIMED_OUT, ERROR, and NOT_SUBMITTED. The last is
 used for tasks stopped before submission after a result-storage failure.
 
 On a result-storage failure the client stops starting further submissions, joins
@@ -131,7 +132,10 @@ Namespaces, cgroups, stronger cleanup, and cancellation remain separate work.
 
 Worker loss or a network error produces a per-input ERROR and the batch continues
 where capacity allows. A failed response can leave submission outcome unknown;
-Forge does not retry or claim exactly-once effects. Disconnecting the client does
+The client does not resubmit unknown outcomes. --retries 1..3 explicitly enables
+coordinator worker-loss recovery per input with at-least-once semantics; it does
+not retry command failures or result-storage errors. See [recovery.md](recovery.md)
+for eligibility, attempt inspection and repeated-side-effect risks. Disconnecting the client does
 not cancel already accepted jobs. Map is currently client-driven: the coordinator
 sees ordinary individual jobs, not a durable batch object or atomic batch admission.
 
@@ -146,5 +150,5 @@ verifies staged map tasks on both workers over TLS, with no source directory
 visible there. These are correctness tests, not performance benchmarks.
 
 Larger streaming uploads, directory/dependency packages, output-file retrieval,
-durable batch state, cancellation, retries, and physical-machine validation remain
+durable batch state, cancellation, and physical-machine validation remain
 open. Current map collects stdout/stderr, not arbitrary files produced by jobs.

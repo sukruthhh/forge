@@ -28,8 +28,9 @@ if CPU remains unused. CPU/RAM reservations are not enforced OS limits.
 
 Jobs transition from QUEUED to ASSIGNED to RUNNING, then to an explicit terminal state. RUNNING means assignment
 is being delivered, not that exec succeeded. A terminal state carries a command result or
-infrastructure failure. There is no start acknowledgment, durable history, or
-attempt/retry state machine. Map iteration follows lexicographic job ID order;
+infrastructure failure. There is no start acknowledgment or durable history.
+Opt-in worker-loss retries add numbered attempts and can return a job to QUEUED;
+see [recovery semantics](recovery.md). Map iteration follows lexicographic job ID order;
 queue fairness/FIFO is not guaranteed.
 
 Worker heartbeats receive assignments. A separate asynchronous execution task
@@ -42,10 +43,11 @@ connection-handler limit. Unplaced jobs fail after five seconds. Submissions,
 heartbeats, results, and disconnects trigger scheduling. The assignment-to-result
 deadline is runtime plus five seconds, checked on worker messages; a session
 without messages times out independently. Runtime is 1..30 seconds. The CLI
-allows 45 seconds for its response. A disconnected client does not automatically
+allows 45 seconds per allowed attempt for its response. A disconnected client does not automatically
 cancel an accepted job. The latest 64 completed results are retained for inspection;
 see [job-inspection.md](job-inspection.md). Bounded flat-file staging and client-driven
-map are described in [batch workloads](batch-workloads.md); retries remain planned.
+map are described in [batch workloads](batch-workloads.md). --retries defaults to
+zero and permits up to three worker-loss retries; command failures/timeouts stay terminal.
 
 ## Execution lifecycle
 
@@ -68,7 +70,7 @@ cleanup, avoiding a PID-reuse race during cleanup.
 Graceful worker shutdown or detected coordinator disconnection cancels execution.
 
 SIGKILL or machine failure cannot run cleanup: a worker's child may survive. This
-is one reason worker-loss retries are not enabled. Processes deliberately escaping
+is why worker-loss retries require explicit opt-in. Processes deliberately escaping
 the group are outside this trusted-workload scope. Cgroups will provide stronger
 process-tree lifecycle control later.
 
@@ -101,7 +103,9 @@ contain NUL. Zero memory means no RAM reservation, not enforced unlimited usage.
 
 SUBMIT is the first client message and receives RESULT or ERROR. HEARTBEAT can
 receive OK or ASSIGNMENT. Worker RESULT receives OK; the next heartbeat may fetch
-another assignment. Session loss yields ERROR to the waiting client, without retry.
+another assignment. With retries disabled, session loss yields ERROR without retry.
+The [recovery extension](recovery.md) adds attempt-aware assignments/results,
+retry-enabled submissions, structured job errors and attempt inspection.
 
 ## Inspection update
 The job-inspection milestone adds bounded in-memory retention and explicit terminal states.

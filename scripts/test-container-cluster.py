@@ -118,10 +118,30 @@ def main():
         plaintext = docker("exec", client, binary, "cluster", "--host", host, check=False)
         if plaintext.returncode == 0 or "require mutual TLS" not in plaintext.stderr:
             raise RuntimeError("remote plaintext policy bypassed")
-        docker("stop", "--time", "2", worker_a)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(execute, client, "client", binary, "run", "--host", host,
+                                  "--retries", "1", "--timeout", "10", "--", "python3", "-c",
+                                  "import socket,time; time.sleep(4); print(socket.gethostname())")
+            active = []
+            def active_job():
+                listing = execute(client, "client", binary, "ps", "--host", host).stdout
+                active[:] = [row.split("\t") for row in listing.splitlines()[1:] if "\tRUNNING\t" in row]
+                return len(active) == 1
+            wait_for(active_job, "retry fixture never entered RUNNING")
+            job = active[0]
+            victim = {"bridge-a": worker_a, "bridge-b": worker_b}[job[2]]
+            survivor = worker_b if victim == worker_a else worker_a
+            docker("stop", "--time", "1", victim)
+            recovered = pending.result(timeout=25)
+            survivor_host = docker("inspect", "--format", "{{.Config.Hostname}}", survivor).stdout.strip()
+            if recovered.stdout.strip() != survivor_host:
+                raise RuntimeError("lost-worker job did not complete on the surviving container")
+            attempts = execute(client, "client", binary, "attempts", job[0], "--host", host)
+            if "attempts=2/2" not in attempts.stderr or "\tLOST\t" not in attempts.stdout or "\tSUCCEEDED\t" not in attempts.stdout:
+                raise RuntimeError("cross-container recovery did not retain both execution attempts")
         wait_for(lambda: "DEAD" in cluster().stdout, "worker-container loss not detected")
         execute(client, "client", binary, "run", "--host", host, "--", "/bin/true")
-        print("PASS: mutual TLS across four containers; staged map, ordered results, cleanup, external benchmark smoke, ps/logs, loss, remaining capacity.")
+        print("PASS: mutual TLS across four containers; staged map, ordered results, cleanup, external benchmark smoke, ps/logs, active-job recovery, attempt history, remaining capacity.")
         print("This verifies separate network namespaces on one Docker host, not separate physical machines or performance.")
     finally:
         for name in reversed(created):
