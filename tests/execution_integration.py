@@ -2,6 +2,7 @@
 import concurrent.futures
 import re
 import os
+import platform
 import signal
 import socket
 import subprocess
@@ -60,6 +61,12 @@ try:
     result = run("/usr/bin/printf", "%s", "hello ; $(echo not-a-shell)")
     require(result.returncode == 0 and result.stdout == b"hello ; $(echo not-a-shell)",
             "argument boundaries or literal shell syntax damaged")
+    result = run("/usr/bin/uname", "-m", options=("--arch", "native"))
+    require(result.returncode == 0 and result.stdout.decode().strip() == platform.machine(),
+            "explicit native architecture failed real execution")
+    result = run("/usr/bin/printf", "portable", options=("--arch", "any"))
+    require(result.returncode == 0 and result.stdout == b"portable",
+            "architecture-independent command failed real execution")
     result = run("/bin/sh", "-c", "printf stdout; printf stderr >&2; exit 7")
     require(result.returncode == 7 and result.stdout == b"stdout" and b"stderr" in result.stderr,
             "stdout, stderr, or nonzero exit lost")

@@ -17,8 +17,10 @@ shell command. `--memory` is bytes. A shell can be invoked explicitly if needed.
 
 ## Placement and state
 
-SUBMIT creates a process-local `job-N` ID. The CLI requests Linux and its own
-architecture; GPU requests/architecture overrides are not exposed yet. The
+SUBMIT creates a process-local `job-N` ID. The CLI requests Linux and defaults to
+its own architecture. `--arch native` makes that default explicit; `--arch ARCH`
+requests an exact worker-advertised label, such as x86_64 or aarch64. `--arch any`
+removes the architecture constraint. GPU requests are not exposed yet. The
 existing resource-aware scheduler chooses a connected, recently heard-from, idle
 compatible worker. The registry mutex covers selection AND reservation, so
 concurrent clients cannot reserve the same slot. Each worker holds one job, even
@@ -87,7 +89,11 @@ Framing in [protocol.md](protocol.md) is unchanged. New v1 message IDs:
 | 9 | RESULT | Job ID, exit 0..255, stdout bytes, stderr bytes, timeout `0`/`1`, truncation `0`/`1` |
 
 CPU is 1..1048576; RAM is uint64 including zero; timeout is 1..30. OS must be Linux;
-architecture uses the label validator. Executable must be nonempty and argv cannot
+architecture is an exact 1..64 character label, or empty for unrestricted architecture.
+The CLI resolves native to uname's machine label and encodes any as an empty field;
+native and any are CLI keywords, not wire-level wildcard labels. Older coordinators
+reject empty architecture fields rather than silently relaxing compatibility.
+Executable must be nonempty and argv cannot
 contain NUL. Zero memory means no RAM reservation, not enforced unlimited usage.
 
 SUBMIT is the first client message and receives RESULT or ERROR. HEARTBEAT can
@@ -98,3 +104,28 @@ another assignment. Session loss yields ERROR to the waiting client, without ret
 The job-inspection milestone adds bounded in-memory retention and explicit terminal states.
 Terminal states distinguish success, failure, timeout, loss, and placement expiry.
 See [job-inspection.md](job-inspection.md) for ps/logs and message IDs 10..12.
+
+## Architecture targeting
+
+```sh
+forge run --arch native -- /usr/bin/uname -m
+forge run --arch aarch64 -- /usr/bin/uname -m
+forge run --arch any -- python3 /opt/workloads/analyze.py
+```
+
+Exact labels match the worker's uname machine string. No aliases are normalized:
+Linux ARM64 commonly advertises aarch64, so arm64 is a different exact request.
+An unknown but syntactically valid label waits for compatible capacity and then
+expires under the existing five-second queue deadline if no worker matches.
+Labels are 1..64 ASCII letters, digits, dots, underscores, or hyphens; empty or
+malformed CLI values and repeated --arch options are rejected.
+
+Use any only when the command, files, interpreters, and dependencies already exist
+and work on every otherwise eligible Linux worker. Forge does not inspect the
+executable, package dependencies, translate machine code, or emulate another
+architecture. OS, resource, liveness, and single-job worker constraints still
+apply. It remains the caller's responsibility to select a valid workload target.
+
+Simulated worker advertisements test heterogeneous placement. Actual process
+execution with native/any is tested on the local Linux architecture; execution on
+physical ARM64 hardware remains unverified until the Mac's Linux VM is ready.

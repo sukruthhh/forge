@@ -44,4 +44,7 @@ if(BUILD_TESTING)
   add_test(NAME tls_integration COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/tls_integration.py $<TARGET_FILE:forge>)
   set_tests_properties(tls_integration PROPERTIES TIMEOUT 90)
+  add_test(NAME architecture_integration COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/architecture_integration.py $<TARGET_FILE:forge>)
+  set_tests_properties(architecture_integration PROPERTIES TIMEOUT 45)
 endif()

@@ -99,3 +99,17 @@ Optional token admission remains available inside TLS. See
 [network setup](network-setup.md) for credential handling, limits, and the pending
 physical-machine validation checklist. Earlier loopback decisions above describe
 the milestones that preceded this transport extension.
+
+## 008: Explicit architecture policy before portable workload packaging
+
+Keep native architecture matching as the default for submissions. Expose --arch
+for an exact advertised label, with native and any as explicit CLI policies.
+Resolve native at submission time and represent any with an empty architecture
+constraint, which the placement library already supports. Coordinator validation
+accepts that empty field while retaining Linux, argv, and resource validation.
+
+Do not infer portability from a command name or script extension. A Python command
+can still depend on architecture-specific packages or executables. The caller
+selects any deliberately and must provision compatible files/dependencies on each
+worker until packaging defines artifact-specific compatibility. Older coordinators
+reject the new wildcard submission schema; native/default messages are unchanged.

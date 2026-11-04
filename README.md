@@ -75,6 +75,12 @@ persistent history and automatic retries are not implemented yet. Optional loopb
 authentication uses `FORGE_TOKEN`; see [authentication](docs/authentication.md)
 and the [recovery audit](docs/recovery-audit.md).
 
+The default `run` architecture is the submitting Linux machine's architecture.
+Use `--arch aarch64` or `--arch x86_64` to target a worker explicitly. For commands
+whose installed programs and dependencies support all eligible Linux workers,
+`--arch any` allows placement on any architecture. This does not translate binaries
+or install dependencies. See [execution](docs/execution.md) for the exact contract.
+
 ## Test a networked cluster locally
 
 After building the Linux binary in build/recovery and building forge-dev:

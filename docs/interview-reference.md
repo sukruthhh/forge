@@ -62,6 +62,7 @@ motivation in your own words rather than presenting this document as a script.
 | File transfer, batch map, durable logs/history | Planned |
 | Heartbeats | Implemented with READY/SUSPECT/DEAD inspection and session deadlines |
 | Authentication and encryption | Mutual TLS 1.3 for IPv4 endpoints; optional FORGE_TOKEN gate; no per-worker identity binding or roles |
+| Explicit workload architecture | run defaults to native; exact labels and explicit any override; heterogeneous placement tested with simulated advertisements |
 | Retries and attempt tracking | Planned |
 | Namespaces and cgroups v2 | Planned |
 | Native macOS workers and CUDA placement | Planned; current matching only checks a supplied CUDA boolean |
@@ -508,3 +509,35 @@ all operations; worker IDs are not bound to certificate subjects. Certificate
 revocation/rotation automation, roles, safer workload credentials, isolation,
 staging/map, and retries remain open. The concrete next validation step is the
 separate-Linux-machine checklist in network-setup.md, followed by workload staging.
+
+## Explicit workload architecture (November 3)
+
+forge run now accepts --arch native (the default), --arch ARCH for an exact
+worker-advertised label, and --arch any for an explicitly portable command.
+Native resolves to the submitting Linux system's uname machine label; any sends
+an empty architecture constraint to the existing placement library. Linux OS,
+resources, liveness, and single-job worker eligibility are still enforced.
+Empty/malformed CLI values and repeated options are rejected. Valid labels with
+no matching capacity expire under the existing five-second placement deadline.
+
+Why keep native as the default? An arbitrary executable can be machine-specific.
+Why expose any? A preinstalled interpreter/command with compatible dependencies
+can be available on both x86_64 and aarch64 workers. Forge cannot infer that
+portability merely from argv. The caller remains responsible until artifact
+packaging provides a stronger compatibility contract. This feature adds neither
+emulation nor dependency installation. See [execution](execution.md).
+
+Validation: all eight CTest suites passed in the Ubuntu/GCC 13.3 Debug environment
+(61.93 seconds). The new architecture suite uses two simulated worker advertisements
+to verify default/native/exact/any placement, incompatible-target expiry, and input
+validation. The real-process execution suite checks native and any on the local
+architecture; these do not establish ARM64 execution. TLS integration also exercises
+an any submission. Physical ARM64 verification remains pending the Mac's Linux VM.
+The final TLS any case passed in a targeted rerun, and the four-container private
+network test passed again with the updated binary.
+
+The prior TLS commit 09d2666 also passed
+[GitHub Actions](https://github.com/sukruthhh/forge/actions/runs/41711281090), including
+the container network test; that remote evidence was confirmed after its local
+validation record was written. Current full-scope milestones and deferred fleet
+setup are tracked in [development status](development-status.md).

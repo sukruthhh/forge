@@ -75,6 +75,9 @@ In another Linux terminal with client credentials configured:
 
 Commands and inputs must already exist on workers. All executables still target
 Linux; these examples do not establish a native Windows or macOS CLI/backend.
+Submissions default to the CLI's architecture. For a portable workload installed
+on both x86_64 and aarch64 Linux workers, explicitly use --arch any; use an exact
+--arch label for an architecture-specific workload. See [execution](execution.md).
 Permit the coordinator's TCP port only from the intended private peers. Certificate
 admission is not a reason to expose the development runtime to the public Internet.
 

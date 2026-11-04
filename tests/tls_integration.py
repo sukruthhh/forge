@@ -150,7 +150,7 @@ try:
                 "python3", "-c", "import os,time; print(os.getppid()); time.sleep(1)", env=client_env), range(2)))
         require(all(r.returncode == 0 for r in results) and
                 {int(r.stdout) for r in results} == {w.pid for w in workers}, "TLS placement did not use both workers")
-        result = command("run", "--port", port, "--", "python3", "-c",
+        result = command("run", "--port", port, "--arch", "any", "--", "python3", "-c",
                          "import sys; sys.stdout.buffer.write(b'a\\x00b'+b'x'*20000); sys.stderr.write('err'); sys.exit(7)", env=client_env)
         require(result.returncode == 7 and len(result.stdout) == 16384 and result.stdout.startswith(b"a\x00b")
                 and b"err" in result.stderr and b"truncated" in result.stderr, "TLS binary output/exit/bounds damaged")

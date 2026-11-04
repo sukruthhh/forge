@@ -144,7 +144,7 @@ void schedule(Registry& registry) {
 void submit(net::Connection& connection, Registry& registry, const Message& message) {
     const auto& fields = message.fields;
     if (fields.size() < 6 || fields.size() > 133 || fields[5].empty() ||
-        fields[3] != "linux" || !label(fields[4]))
+        fields[3] != "linux" || (!fields[4].empty() && !label(fields[4])))
         throw std::runtime_error("invalid submission schema");
     auto cpu = number(fields[0]);
     auto memory = number(fields[1]);
@@ -457,11 +457,18 @@ int logs(std::uint16_t port, const std::string& id, const std::string& host) {
 }
 
 int run(std::uint16_t port, std::uint32_t cpu, std::uint64_t memory,
-        std::uint32_t timeout, const std::vector<std::string>& arguments, const std::string& host) {
-    utsname system{};
-    if (::uname(&system) != 0) throw std::runtime_error("architecture discovery failed");
+        std::uint32_t timeout, const std::vector<std::string>& arguments,
+        const std::string& host, const std::string& architecture) {
+    if (!label(architecture))
+        throw std::runtime_error("architecture must be native, any, or a 1-64 character architecture label");
+    std::string target = architecture;
+    if (architecture == "native") {
+        utsname system{};
+        if (::uname(&system) != 0) throw std::runtime_error("architecture discovery failed");
+        target = system.machine;
+    } else if (architecture == "any") target.clear();
     Message request{Type::submit, {std::to_string(cpu), std::to_string(memory),
-        std::to_string(timeout), "linux", system.machine}};
+        std::to_string(timeout), "linux", target}};
     request.fields.insert(request.fields.end(), arguments.begin(), arguments.end());
     auto socket = connect_coordinator(port, host);
     net::send(socket, request);

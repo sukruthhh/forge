@@ -20,9 +20,10 @@ int main(int argc, char** argv) {
                      "  forge cluster [--port 9000]\n"
                      "  forge ps [--port 9000]\n"
                      "  forge logs JOB [--port 9000]\n\n"
-                     "  forge run [--port 9000] [--cpu 1] [--memory 0] [--timeout 30] -- COMMAND [ARGS...]\n\n"
+                     "  forge run [--port 9000] [--cpu 1] [--memory 0] [--timeout 30] [--arch native|any|ARCH] -- COMMAND [ARGS...]\n\n"
                      "Network options: coordinator --bind IPv4; other commands --host IPv4 (default 127.0.0.1).\n"
                      "Remote endpoints require FORGE_TLS_CA, FORGE_TLS_CERT, FORGE_TLS_KEY (mutual TLS).\n"
+                     "Architecture defaults to native. Use any only when the command and dependencies support every eligible worker.\n"
                      "Trusted commands, no sandbox. Optional additional authentication: FORGE_TOKEN.\n";
         return 0;
     }
@@ -30,6 +31,8 @@ int main(int argc, char** argv) {
     std::uint16_t port = 9000;
     std::string id, log_id;
     std::string endpoint = "127.0.0.1";
+    std::string architecture = "native";
+    bool architecture_seen = false;
     bool endpoint_seen = false;
     std::uint32_t cpu = 1, timeout = 30;
     std::uint64_t memory = 0;
@@ -63,6 +66,9 @@ int main(int argc, char** argv) {
                         command == "ps" || command == "logs" || command == "run")))) {
             endpoint = value;
             endpoint_seen = true;
+        } else if (option == "--arch" && command == "run" && !architecture_seen) {
+            architecture = value;
+            architecture_seen = true;
         } else if (option == "--id" && command == "join" && id.empty()) {
             id = value;
         } else if (command == "run" &&
@@ -85,7 +91,8 @@ int main(int argc, char** argv) {
     if (command == "ps") return forge::ps(port, endpoint);
     if (command == "logs") return forge::logs(port, log_id, endpoint);
     if (command == "join" && !id.empty()) return forge::join(port, id, endpoint);
-    if (command == "run" && !arguments.empty()) return forge::run(port, cpu, memory, timeout, arguments, endpoint);
+    if (command == "run" && !arguments.empty())
+        return forge::run(port, cpu, memory, timeout, arguments, endpoint, architecture);
     throw std::runtime_error("unsupported command; run forge --help");
   } catch (const std::exception& error) {
     std::cerr << "forge: " << error.what() << '\n';
