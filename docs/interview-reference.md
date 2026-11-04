@@ -2,7 +2,7 @@
 
 Updated: November 3, 2026
 
-Implementation baseline: Linux runtime with mutual TLS, IPv4 endpoints, and optional token admission (November 3)
+Implementation baseline: Linux runtime with mutual TLS, bounded staging, and parallel map (November 3)
 
 Stack: **C++20 | Linux | TCP/IP | CMake**
 
@@ -30,6 +30,8 @@ programmable compute cluster.
 > runtime limits and worker loss. Optional shared-token authentication gates local
 > sessions. I then added mutual TLS and explicit IPv4 endpoints, with network tests
 > across separate containers. Physical-machine validation and retries are next.
+> Bounded file staging and map now distribute independent inputs and save per-task
+> results; larger packaging and isolation remain open.
 
 **Longer explanation:** The target user owns several machines with different
 resources but otherwise submits work to each machine manually. Forge should make
@@ -59,7 +61,8 @@ motivation in your own words rather than presenting this document as a script.
 | Round-robin and least-loaded policies | Planned; only the resource-aware heuristic exists |
 | Worker process execution | Implemented: explicit argv, output/exit capture, runtime/output bounds, one job per worker |
 | Job inspection and retained logs | Implemented: active jobs plus 64 finalized results in memory, explicit terminal states |
-| File transfer, batch map, durable logs/history | Planned |
+| File staging and batch map | Up to 16 flat files / 32 KiB per task; client-driven map, up to 256 inputs and 16 in-flight jobs; local-process and TLS container tests |
+| General dependency packaging, output files, durable history | Planned |
 | Heartbeats | Implemented with READY/SUSPECT/DEAD inspection and session deadlines |
 | Authentication and encryption | Mutual TLS 1.3 for IPv4 endpoints; optional FORGE_TOKEN gate; no per-worker identity binding or roles |
 | Explicit workload architecture | run defaults to native; exact labels and explicit any override; heterogeneous placement tested with simulated advertisements |
@@ -85,25 +88,27 @@ placement accounting, not kernel resource enforcement.
 
 ## 3. Intended user experience
 
-join, cluster, run, ps, and logs support default loopback or TLS IPv4 endpoints. Other commands below
-remain the target interface. Current join requires `--id NAME`, and run requires
+join, cluster, run, map, ps, and logs support default loopback or TLS IPv4 endpoints.
+Current join requires `--id NAME`, and run/map require
 options before `--` followed by command arguments:
 
 ```sh
-forge join
+forge join --id desktop
 forge cluster
-forge run ./benchmark --cpu 4
-forge map inputs/*.json -- python analyze.py {}
+forge run --cpu 4 -- ./benchmark
+forge map --file analyze.py inputs/*.json -- python3 analyze.py '{}'
 forge ps
 forge logs <job>
 ```
 
 Current runnable example: `forge run --timeout 5 -- /usr/bin/printf hello`.
-Files and dependencies must already exist on the worker; no upload is performed.
+Without --file, commands and inputs must already exist on the worker. --file can
+stage a small flat package; interpreters and system dependencies must be installed.
 
 `run` submits one job; `map` creates independent jobs from a collection of inputs.
-The CLI syntax and packaging rules still need implementation decisions. For
-example, an executable built for Linux x86_64 cannot simply run on macOS ARM64.
+The implemented limits and results contract are in [batch workloads](batch-workloads.md).
+Richer packaging and artifact compatibility remain open. For example, an executable
+built for Linux x86_64 cannot simply run on macOS ARM64.
 An interpreter-based workload also needs compatible interpreters and dependencies.
 
 ## 4. Architecture and ownership
@@ -254,16 +259,17 @@ eventually terminate the relevant child process tree.
 
 ## 8. Execution implemented; isolation and security planned
 
-Workers launch explicit argv using posix_spawnp, inheriting the worker's environment
-and working directory. Stdin is /dev/null. Separate nonblocking-drained pipes
+Workers launch explicit argv using posix_spawnp, inheriting the worker's environment.
+Plain jobs use its working directory; staged jobs use a fresh temporary directory.
+Stdin is /dev/null. Separate nonblocking-drained pipes
 capture stdout/stderr, retaining 16 KiB per stream while discarding excess output
 to avoid deadlock. Timeout is 1..30 seconds; it kills the process group and returns
 124. Spawn errors return 127; signals return 128+signal. An explicit timeout flag
 distinguishes timeout from a program choosing the same exit code. Heartbeats run
 while execution proceeds on a separate asynchronous task. See [execution.md](execution.md).
 
-No file staging, environment filtering, user-selected working directory, or live
-log streaming exists yet. Graceful worker cleanup kills group descendants, but
+Flat-file staging and map exist. Environment filtering, arbitrary user-selected
+working directories, and live log streaming remain open. Graceful worker cleanup kills group descendants, but
 SIGKILL cannot run cleanup and children may survive. Processes deliberately
 escaping their group are outside the trusted-workload scope.
 
@@ -365,8 +371,8 @@ uses projected CPU/RAM reservation fractions, not sampled OS load.
 failure model. First establish correct single-coordinator behavior and measure
 the need. The availability limitation remains explicit.
 
-**What would you improve next?** Durable job history, input staging,
-batch mapping, authenticated cross-machine connections, and explicit retry
+**What would you improve next?** Physical-machine validation, larger workload
+packaging, durable job history, isolation, and explicit retry
 semantics. Prioritize these against real workloads and measured bottlenecks.
 
 **How did you use AI?** Be direct: AI assisted implementation, documentation, and
@@ -400,7 +406,8 @@ benchmark commands, raw results, and configuration with the eventual claims.
 1. Refresh this document against the exact commit you plan to demonstrate.
 2. Practice the thirty-second explanation and one detailed scheduler walkthrough.
 3. Identify one real bug, its cause, the fix, and the test that prevents recurrence.
-   No bug story has been recorded yet; do not invent one.
+   The staging milestone below records an assignment-frame size defect found in
+   review and the admission-boundary regression that now covers it.
 4. Prepare an actual demo with a fallback recording once distributed execution works.
 5. Bring measured results and limitations; keep planned capabilities in future tense.
 
@@ -541,3 +548,50 @@ The prior TLS commit 09d2666 also passed
 the container network test; that remote evidence was confirmed after its local
 validation record was written. Current full-scope milestones and deferred fleet
 setup are tracked in [development status](development-status.md).
+
+## Bounded staging and parallel map (November 3)
+
+Implemented --file for run and map, with flat regular files captured before
+submission, 16-file / 32-KiB limits, executable intent, and a new worker directory
+per task. Changed only the child's cwd through spawn file actions, preserving the
+worker's heartbeat thread environment. Validated paths and counts at client,
+coordinator, and worker boundaries. Inputs are cleared before job-history retention.
+Staging is capability-gated; legacy workers still run ordinary submissions.
+
+Map snapshots 1-256 inputs and shared files, replaces standalone {} argv tokens,
+and runs up to 16 in-flight jobs capped by an initial compatible idle-worker
+snapshot. It saves indexed binary stdout/stderr and per-task JSON as results arrive,
+then produces an input-ordered results.jsonl and summary table. Command failures,
+timeouts, infrastructure errors, unknown outcomes, and result-storage failures
+remain explicit. No jobs are automatically retried. It is a client pipeline, not
+a durable coordinator-owned batch object. Full limits are in
+[batch workloads](batch-workloads.md).
+
+Review found that a submission fitting a frame can grow when its resource/OS
+prefix is replaced by the assignment's job-ID prefix. A maximum-size submission
+could therefore be admitted even though its dispatch frame was too large. The
+coordinator and client now validate the eventual assignment using the maximum
+job-ID length before admission/submission. A raw, valid boundary-size staged
+submission must return ERROR without changing job history. This records a source
+review finding and a regression check, not an observed pre-fix physical failure.
+
+Validation: GCC 13.3 Ubuntu 24.04 Debug build passed all nine CTest suites
+(101.47 seconds). Staging/map coverage includes binary data, maximum file/data
+bounds, executable modes, permissions, unique directories, success/failure/timeout
+cleanup, unsafe manifests, duplicate names, FIFOs/symlinks, legacy-worker gating,
+parallel worker placement, ordered input/result association, retained logs, mixed
+exits, truncation, active-job worker loss, and single-worker fan-out capping.
+RLIMIT_FSIZE failure injection verifies storage errors stop subsequent submissions
+and do not trigger retries. Tests are correctness evidence, not benchmark results.
+
+The updated four-container bridge test passed with source files created only in
+the CLI container. Staged map tasks ran on both worker containers over mutual TLS,
+reported the expected input values and worker identities, could not see the CLI's
+source directory, and left no task directories after normal cleanup. The fixture
+is materially different from a shared-filesystem demo. It remains one Docker host,
+not physical-machine or ARM64 execution evidence.
+
+General dependency/directory packaging, larger streaming uploads, arbitrary output
+artifact retrieval, durable batch metadata, cancellation/retries, namespaces/cgroups,
+and physical-machine benchmarks are still open. The bundled JSON-summary example
+is a workflow demonstration with synthetic inputs, not a performance experiment.

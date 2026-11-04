@@ -12,8 +12,9 @@ struct ExecutionResult {
     bool timed_out = false;
     bool truncated = false;
 };
-// Trusted commands only. No shell interpretation or file staging. Runtime limit
+// Trusted commands only. No implicit shell interpretation. Runtime limit
 // applies to the process group, including descendants keeping output pipes open.
 ExecutionResult execute(const std::vector<std::string>& arguments,
-                        std::uint32_t timeout_seconds, const std::atomic<bool>& stop);
+                        std::uint32_t timeout_seconds, const std::atomic<bool>& stop,
+                        const std::string& working_directory = {});
 }

@@ -21,7 +21,7 @@ repeated fields:
 ```
 
 Fields are binary-safe at the framing layer. Schema validation applies separately.
-Unknown versions/types (outside 1..13), excess fields, trailing bytes, truncated fields, and
+Unknown versions/types (outside 1..17), excess fields, trailing bytes, truncated fields, and
 out-of-range lengths are errors. Reads/writes handle fragmentation and coalescing.
 Each receive shares one absolute monotonic deadline across header and body;
 receiving a few bytes does not reset it. Sending suppresses SIGPIPE and uses a
@@ -33,7 +33,7 @@ message IDs are identical inside TLS; no plaintext negotiation or fallback exist
 
 | ID | Name | Fields |
 |---|---|---|
-| 1 | REGISTER | ID, OS, architecture, CPU decimal, RAM bytes decimal, CUDA `0`/`1` |
+| 1 | REGISTER | ID, OS, architecture, CPU decimal, RAM bytes decimal, CUDA `0`/`1`; optional seventh field `staging-v1` |
 | 2 | HEARTBEAT | None; belongs to the registered connection |
 | 3 | CLUSTER | None; first message on a separate client connection |
 | 4 | OK | None |
@@ -76,3 +76,31 @@ state is in memory and lost on restart. Thread-per-connection favors simplicity
 at this scale; an event loop is a future option if measurements justify it.
 
 Job listing and log retrieval add message IDs 10..12; see [job-inspection.md](job-inspection.md).
+
+## Staging and capability discovery
+
+| ID | Name | Fields |
+|---|---|---|
+| 14 | STAGED_SUBMIT | CPU, RAM, timeout, OS, architecture, file count, file triples, argv |
+| 15 | STAGED_ASSIGNMENT | Job ID, timeout, file count, file triples, argv |
+| 16 | WORKER_CAPABILITIES | None; first application request after any authentication |
+| 17 | CAPABILITY_SNAPSHOT | Repeated eight-field groups: six worker capability fields, state, staging capability |
+
+Each file triple is basename, executable `0`/`1`, binary file data. Count is 1..16,
+total data is at most 32768 bytes, and filenames are flat ASCII labels excluding
+`.` and `..`. Duplicate names, path separators, NUL, unknown flags, invalid counts,
+and oversized packages are rejected before admission. Complete submission and
+assignment frames must fit the existing payload/field bounds; the coordinator
+checks assignment framing using the maximum job-ID length before allocating a job.
+Job IDs/argv are not filenames and retain their existing independent validation.
+
+The optional registration feature is exact: `staging-v1`; any other seventh value
+is rejected. Six-field legacy registrations are accepted with staging disabled.
+Snapshot type 5 retains its original schema. Type 17 additionally reports BUSY for
+a recently heard-from worker with an assignment, and uses an empty capability
+string for legacy workers. Its other liveness states match type 5.
+
+Only staging-capable workers may receive type 15. Updated join advertises the
+feature; it requires an updated coordinator. Older coordinators reject these
+extensions rather than silently executing without files. Authentication gates
+all new application requests. See [batch workloads](batch-workloads.md).

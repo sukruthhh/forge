@@ -137,7 +137,7 @@ void Connection::secure(const TlsContext& context, bool server, const std::strin
 
 std::vector<std::uint8_t> encode(const Message& message) {
     const auto type = static_cast<std::uint8_t>(message.type);
-    if (type < 1 || type > 13 || message.fields.size() > max_fields)
+    if (type < 1 || type > 17 || message.fields.size() > max_fields)
         throw std::runtime_error("invalid message");
     std::vector<std::uint8_t> payload{1, type};
     append32(payload, static_cast<std::uint32_t>(message.fields.size()));
@@ -155,7 +155,7 @@ std::vector<std::uint8_t> encode(const Message& message) {
 
 Message decode(const std::vector<std::uint8_t>& payload) {
     if (payload.size() < 6 || payload.size() > max_frame || payload[0] != 1 ||
-        payload[1] < 1 || payload[1] > 13) throw std::runtime_error("invalid protocol header");
+        payload[1] < 1 || payload[1] > 17) throw std::runtime_error("invalid protocol header");
     Message message{static_cast<Type>(payload[1]), {}};
     std::size_t offset = 2;
     const auto count = read32(payload, offset);

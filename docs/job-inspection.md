@@ -38,7 +38,8 @@ an error rather than inventing stdout or an exit status.
 
 ## Wire protocol additions
 
-Framing is unchanged. Message types now range from 1 through 12:
+This milestone introduced types 10 through 12; later authentication/staging
+extensions are described in [protocol](protocol.md). Framing is unchanged:
 
 | ID | Name | Fields |
 |---|---|---|

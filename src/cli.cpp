@@ -21,6 +21,10 @@ int main(int argc, char** argv) {
                      "  forge ps [--port 9000]\n"
                      "  forge logs JOB [--port 9000]\n\n"
                      "  forge run [--port 9000] [--cpu 1] [--memory 0] [--timeout 30] [--arch native|any|ARCH] -- COMMAND [ARGS...]\n\n"
+                     "  forge run [OPTIONS] [--file PATH]... -- COMMAND [ARGS...]\n"
+                     "  forge map [OPTIONS] [--file SHARED]... [--jobs 16] [--output DIR] INPUT... -- COMMAND {}\n\n"
+                     "Staging: at most 16 flat files and 32768 data bytes per task; no dependency installation.\n"
+                     "Map: at most 256 inputs; output directory must be new; jobs is a parallelism cap.\n"
                      "Network options: coordinator --bind IPv4; other commands --host IPv4 (default 127.0.0.1).\n"
                      "Remote endpoints require FORGE_TLS_CA, FORGE_TLS_CERT, FORGE_TLS_KEY (mutual TLS).\n"
                      "Architecture defaults to native. Use any only when the command and dependencies support every eligible worker.\n"
@@ -37,7 +41,10 @@ int main(int argc, char** argv) {
     std::uint32_t cpu = 1, timeout = 30;
     std::uint64_t memory = 0;
     bool cpu_seen = false, memory_seen = false, timeout_seen = false;
-    std::vector<std::string> arguments;
+    std::vector<std::string> arguments, files, inputs;
+    std::size_t concurrency = 16;
+    std::string output = "forge-map-results";
+    bool concurrency_seen = false, output_seen = false;
     bool port_seen = false;
     int first_option = 2;
     if (command == "logs") {
@@ -45,14 +52,18 @@ int main(int argc, char** argv) {
         log_id = argv[2];
         first_option = 3;
     }
-    for (int i = first_option; i < argc; i += 2) {
-        if (command == "run" && std::string_view(argv[i]) == "--") {
+    for (int i = first_option; i < argc; ++i) {
+        if ((command == "run" || command == "map") && std::string_view(argv[i]) == "--") {
             for (++i; i < argc; ++i) arguments.emplace_back(argv[i]);
             break;
         }
+        if (command == "map" && !std::string_view(argv[i]).starts_with("--")) {
+            inputs.emplace_back(argv[i]);
+            continue;
+        }
         if (i + 1 >= argc) throw std::runtime_error("option needs a value");
         const std::string_view option(argv[i]);
-        const std::string_view value(argv[i + 1]);
+        const std::string_view value(argv[++i]);
         if (option == "--port" && !port_seen) {
             unsigned parsed = 0;
             const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
@@ -63,15 +74,27 @@ int main(int argc, char** argv) {
         } else if (!endpoint_seen && !value.empty() &&
                    ((option == "--bind" && command == "coordinator") ||
                     (option == "--host" && (command == "join" || command == "cluster" ||
-                        command == "ps" || command == "logs" || command == "run")))) {
+                        command == "ps" || command == "logs" || command == "run" || command == "map")))) {
             endpoint = value;
             endpoint_seen = true;
-        } else if (option == "--arch" && command == "run" && !architecture_seen) {
+        } else if (option == "--arch" && (command == "run" || command == "map") && !architecture_seen) {
             architecture = value;
             architecture_seen = true;
+        } else if (option == "--file" && (command == "run" || command == "map")) {
+            files.emplace_back(value);
+        } else if (option == "--output" && command == "map" && !output_seen && !value.empty()) {
+            output = value;
+            output_seen = true;
+        } else if (option == "--jobs" && command == "map" && !concurrency_seen) {
+            unsigned parsed = 0;
+            const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
+            if (error != std::errc{} || end != value.data() + value.size() || parsed == 0 || parsed > 16)
+                throw std::runtime_error("map jobs must be between 1 and 16");
+            concurrency = parsed;
+            concurrency_seen = true;
         } else if (option == "--id" && command == "join" && id.empty()) {
             id = value;
-        } else if (command == "run" &&
+        } else if ((command == "run" || command == "map") &&
                    (option == "--cpu" || option == "--memory" || option == "--timeout")) {
             std::uint64_t parsed = 0;
             const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
@@ -91,8 +114,11 @@ int main(int argc, char** argv) {
     if (command == "ps") return forge::ps(port, endpoint);
     if (command == "logs") return forge::logs(port, log_id, endpoint);
     if (command == "join" && !id.empty()) return forge::join(port, id, endpoint);
-    if (command == "run" && !arguments.empty())
-        return forge::run(port, cpu, memory, timeout, arguments, endpoint, architecture);
+    if ((command == "run" || command == "map") && !arguments.empty()) {
+        forge::TaskRequest task{cpu, memory, timeout, architecture, arguments, forge::read_inputs(files)};
+        if (command == "run") return forge::run(port, endpoint, task);
+        return forge::map(port, endpoint, task, inputs, concurrency, output);
+    }
     throw std::runtime_error("unsupported command; run forge --help");
   } catch (const std::exception& error) {
     std::cerr << "forge: " << error.what() << '\n';

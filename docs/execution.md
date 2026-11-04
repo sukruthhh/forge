@@ -44,13 +44,16 @@ deadline is runtime plus five seconds, checked on worker messages; a session
 without messages times out independently. Runtime is 1..30 seconds. The CLI
 allows 45 seconds for its response. A disconnected client does not automatically
 cancel an accepted job. The latest 64 completed results are retained for inspection;
-see [job-inspection.md](job-inspection.md). Batch mapping and retries remain planned.
+see [job-inspection.md](job-inspection.md). Bounded flat-file staging and client-driven
+map are described in [batch workloads](batch-workloads.md); retries remain planned.
 
 ## Execution lifecycle
 
-`posix_spawnp` uses explicit argv, the worker's PATH, inherited environment, and
-working directory. Commands, dependencies, and inputs must already be installed
-there; no file upload exists. Stdin is `/dev/null`. Close-on-exec pipes capture
+`posix_spawnp` uses explicit argv, the worker's PATH, and inherited environment.
+Without --file it uses the worker's working directory. Staged jobs use a private
+temporary directory and can bring scripts, inputs, or compatible executables;
+system interpreters and dependencies must still be installed on the worker.
+See [batch workloads](batch-workloads.md). Stdin is `/dev/null`. Close-on-exec pipes capture
 stdout/stderr, drained without blocking. Each stream retains at most 16384 bytes;
 excess is discarded and reported, so output fits the 64-KiB frame limit and noisy
 children cannot deadlock on full pipes. This is collected output, not streaming.

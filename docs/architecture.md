@@ -113,3 +113,35 @@ can still depend on architecture-specific packages or executables. The caller
 selects any deliberately and must provision compatible files/dependencies on each
 worker until packaging defines artifact-specific compatibility. Older coordinators
 reject the new wildcard submission schema; native/default messages are unchanged.
+
+## 009: Bounded flat staging and client-driven map
+
+Start with 16 flat files and 32 KiB of file data per task, staying within the
+existing frame cap instead of adding unbounded upload state. Validate the full
+batch before submitting work, then hold immutable captured bytes in client memory.
+Preserve executable intent, not arbitrary ownership or source path metadata.
+Validate the coordinator's eventual assignment size before admission; its job-ID
+prefix can make it larger than the submission even when the incoming frame fits.
+
+Workers advertise staging-v1 in registration. Keep legacy workers usable for
+ordinary jobs and exclude them from staged placement. Extended capability queries
+report idle/busy state for initial map fan-out without changing cluster's schema.
+The snapshot is advisory; individual placement/reservation remains atomic under
+the coordinator mutex, and competing clients can still exhaust capacity.
+
+A worker creates a private directory and files inside the asynchronous execution
+task. Use posix_spawn file actions for the child's cwd instead of process-wide
+chdir, so heartbeats and concurrent runtime code retain a stable environment.
+Kill ordinary process-group descendants before best-effort directory cleanup.
+This is lifecycle management for trusted commands, not namespace isolation.
+
+Map is a bounded client pipeline over ordinary submissions, with up to 256 inputs
+and 16 in-flight tasks, capped by the initial compatible idle staging-worker count.
+Preserve input order in indexed binary stream files and JSONL metadata while
+allowing completion in any order. Save per-task metadata as work completes. Do not
+overwrite output directories, retry unknown outcomes, or stop independent tasks
+after a command failure. Stop new submissions if local result storage fails.
+
+This provides an end-to-end batch workflow without claiming durable batch state,
+general dependency packaging, output artifact transfer, or at-least-once recovery.
+See [batch workloads](batch-workloads.md) for limits, protocol, and remaining work.

@@ -78,7 +78,8 @@ bool drain(int fd, std::string& destination, bool& truncated) {
 }
 
 ExecutionResult execute(const std::vector<std::string>& arguments,
-                        std::uint32_t timeout_seconds, const std::atomic<bool>& stop) {
+                        std::uint32_t timeout_seconds, const std::atomic<bool>& stop,
+                        const std::string& working_directory) {
     if (arguments.empty() || arguments.front().empty() || timeout_seconds == 0 || timeout_seconds > 30)
         throw std::runtime_error("invalid execution request");
     std::vector<char*> argv;
@@ -90,6 +91,8 @@ ExecutionResult execute(const std::vector<std::string>& arguments,
     Pipe out;
     Pipe err;
     SpawnConfig config;
+    if (!working_directory.empty())
+        checked(::posix_spawn_file_actions_addchdir_np(&config.actions, working_directory.c_str()));
     checked(::posix_spawn_file_actions_addopen(&config.actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0));
     checked(::posix_spawn_file_actions_adddup2(&config.actions, out.write.get(), STDOUT_FILENO));
     checked(::posix_spawn_file_actions_adddup2(&config.actions, err.write.get(), STDERR_FILENO));

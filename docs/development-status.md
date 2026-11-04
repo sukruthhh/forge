@@ -18,20 +18,25 @@ as an objective percentage of completion.
   and explicit any for caller-provisioned portable commands. Simulated architecture
   advertisements verify placement; local Linux processes verify execution.
   All eight CTest suites passed locally; physical ARM64 execution remains pending.
+- Bounded flat-file staging and client-driven forge map are implemented. Nine
+  suites passed locally, including mixed task failures, worker loss, storage-failure
+  injection, validation, and legacy-worker gating. The updated Docker bridge test
+  passed with inputs available only on the CLI container. See
+  [batch workloads](batch-workloads.md) for the precise scope.
 
 ## Full product milestones
 
 | Milestone | Completion evidence still required |
 |---|---|
 | A: actual cross-machine execution | TLS execution on separate physical Linux machines; record command origin, failures, and results |
-| B: useful distributed batch workloads | Bounded input/workload packaging, forge map, compatible parallel placement, aggregate outputs/results |
+| B: useful distributed batch workloads | Flat staging and map now work; larger transfers, richer dependency packaging, output-file retrieval, and real-workload physical-machine validation remain |
 | C: fault tolerance | Attempt identity, lost-worker requeue policy, bounded retries, stale-result rejection, explicit at-least-once semantics and side-effect risks |
 | D: Linux isolation | Namespaces/cgroups v2, enforced CPU/RAM limits, cancellation and descendant cleanup, tested failure behavior and documented security boundaries |
 | E: product quality | Practical installation/onboarding, reproducible real-workload benchmarks, meaningful CI/integration coverage, clear documentation, independent user feedback |
 
 CPU/RAM reservations are not enforced limits. Workers currently execute one job
 at a time and report system capacity without cgroup/affinity adjustment. There is
-no file staging, map, retry/cancellation API, isolation, or persistent job history.
+no general dependency packaging, retry/cancellation API, isolation, or persistent job history.
 GPU discovery/execution and a native macOS backend remain future capabilities.
 
 ## Physical test fleet: preparation pending

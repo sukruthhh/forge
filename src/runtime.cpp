@@ -79,11 +79,44 @@ net::Connection connect_coordinator(std::uint16_t port, const std::string& host)
     }
     return socket;
 }
+std::string target_architecture(const std::string& architecture) {
+    if (!label(architecture))
+        throw std::runtime_error("architecture must be native, any, or a 1-64 character architecture label");
+    if (architecture == "any") return {};
+    if (architecture != "native") return architecture;
+    utsname system{};
+    if (::uname(&system) != 0) throw std::runtime_error("architecture discovery failed");
+    return system.machine;
+}
+Message assignment(const std::string& id, std::uint32_t timeout,
+                   const std::vector<std::string>& arguments, const std::vector<InputFile>& files) {
+    Message message{files.empty() ? Type::assignment : Type::staged_assignment, {id, std::to_string(timeout)}};
+    if (!files.empty()) append_inputs(message.fields, files);
+    message.fields.insert(message.fields.end(), arguments.begin(), arguments.end());
+    return message;
+}
+Message submission(const TaskRequest& task) {
+    if (task.cpu == 0 || task.cpu > 1048576 || task.timeout == 0 || task.timeout > 30 ||
+        task.arguments.empty() || task.arguments.size() > 128 || task.arguments[0].empty())
+        throw std::runtime_error("invalid job resources, timeout, or arguments");
+    for (const auto& argument : task.arguments)
+        if (argument.find('\0') != std::string::npos) throw std::runtime_error("NUL in argument");
+    validate_inputs(task.files);
+    Message request{task.files.empty() ? Type::submit : Type::staged_submit,
+        {std::to_string(task.cpu), std::to_string(task.memory), std::to_string(task.timeout),
+         "linux", target_architecture(task.architecture)}};
+    if (!task.files.empty()) append_inputs(request.fields, task.files);
+    request.fields.insert(request.fields.end(), task.arguments.begin(), task.arguments.end());
+    net::encode(request);
+    net::encode(assignment("job-18446744073709551615", task.timeout, task.arguments, task.files));
+    return request;
+}
 struct Job {
     std::string id;
     JobRequirements requirements;
     std::uint32_t timeout;
     std::vector<std::string> arguments;
+    std::vector<InputFile> files;
     std::string state = "QUEUED";
     std::string worker;
     Clock::time_point assigned_at{};
@@ -96,6 +129,7 @@ struct Record {
     bool connected = true;
     std::shared_ptr<Job> job;
     Resources reserved{0, 0};
+    bool staging = false;
 };
 struct Registry {
     std::mutex mutex;
@@ -129,6 +163,7 @@ void schedule(Registry& registry) {
             candidates.push_back({worker_id, c[1], c[2],
                 {static_cast<std::uint32_t>(number(c[3])), number(c[4])}, record.reserved,
                 c[5] == "1", record.connected && !record.job &&
+                    (job->files.empty() || record.staging) &&
                     Clock::now() - record.last_seen < std::chrono::seconds(1)});
         }
         auto selected = select_worker(candidates, job->requirements);
@@ -143,7 +178,7 @@ void schedule(Registry& registry) {
 }
 void submit(net::Connection& connection, Registry& registry, const Message& message) {
     const auto& fields = message.fields;
-    if (fields.size() < 6 || fields.size() > 133 || fields[5].empty() ||
+    if (fields.size() < 6 ||
         fields[3] != "linux" || (!fields[4].empty() && !label(fields[4])))
         throw std::runtime_error("invalid submission schema");
     auto cpu = number(fields[0]);
@@ -151,12 +186,17 @@ void submit(net::Connection& connection, Registry& registry, const Message& mess
     auto timeout = number(fields[2]);
     if (cpu == 0 || cpu > 1048576 || timeout == 0 || timeout > 30)
         throw std::runtime_error("invalid job resource request or timeout");
-    for (std::size_t i = 5; i < fields.size(); ++i)
-        if (fields[i].find('\0') != std::string::npos) throw std::runtime_error("NUL in argument");
+    std::size_t argument_offset = 5;
     auto job = std::make_shared<Job>();
+    if (message.type == Type::staged_submit) job->files = parse_inputs(fields, argument_offset);
+    if (argument_offset >= fields.size() || fields.size() - argument_offset > 128 || fields[argument_offset].empty())
+        throw std::runtime_error("invalid submission arguments");
+    for (std::size_t i = argument_offset; i < fields.size(); ++i)
+        if (fields[i].find('\0') != std::string::npos) throw std::runtime_error("NUL in argument");
     job->requirements = {fields[3], fields[4], {static_cast<std::uint32_t>(cpu), memory}, false};
     job->timeout = static_cast<std::uint32_t>(timeout);
-    job->arguments.assign(fields.begin() + 5, fields.end());
+    job->arguments.assign(fields.begin() + static_cast<std::ptrdiff_t>(argument_offset), fields.end());
+    net::encode(assignment("job-18446744073709551615", job->timeout, job->arguments, job->files));
     {
         std::unique_lock lock(registry.mutex);
         if (registry.jobs.size() >= 128) throw std::runtime_error("job queue full");
@@ -178,20 +218,22 @@ void submit(net::Connection& connection, Registry& registry, const Message& mess
             job->terminal = true;
         }
         registry.jobs.erase(job->id);
+        job->files.clear();
         registry.history.push_back(job);
         if (registry.history.size() > 64) registry.history.pop_front();
     }
     net::send(connection, job->completion);
 }
-Message snapshot(Registry& registry) {
+Message snapshot(Registry& registry, bool capabilities = false) {
     std::lock_guard lock(registry.mutex);
-    Message result{Type::snapshot, {}};
+    Message result{capabilities ? Type::capability_snapshot : Type::snapshot, {}};
     for (const auto& [id, record] : registry.workers) {
         const auto age = Clock::now() - record.last_seen;
         const std::string state = !record.connected || age >= std::chrono::seconds(2) ? "DEAD" :
             age >= std::chrono::seconds(1) ? "SUSPECT" : "READY";
         result.fields.insert(result.fields.end(), record.capabilities.begin(), record.capabilities.end());
-        result.fields.push_back(state);
+        result.fields.push_back(capabilities && state == "READY" && record.job ? "BUSY" : state);
+        if (capabilities) result.fields.push_back(record.staging ? "staging-v1" : "");
     }
     return result;
 }
@@ -251,20 +293,26 @@ void handle(net::Socket peer, Registry& registry, const std::string& token, cons
             net::send(socket, snapshot(registry));
             return;
         }
+        if (message.type == Type::worker_capabilities && message.fields.empty()) {
+            net::send(socket, snapshot(registry, true));
+            return;
+        }
         if (message.type == Type::jobs || message.type == Type::logs) {
             net::send(socket, inspect(registry, message));
             return;
         }
-        if (message.type == Type::submit) {
+        if (message.type == Type::submit || message.type == Type::staged_submit) {
             submit(socket, registry, message);
             return;
         }
-        if (message.type != Type::register_worker || message.fields.size() != 6)
+        if (message.type != Type::register_worker ||
+            (message.fields.size() != 6 && message.fields.size() != 7))
             throw std::runtime_error("expected registration or cluster request");
         const auto& f = message.fields;
         if (!label(f[0]) || !label(f[1]) || !label(f[2]) ||
             number(f[3]) == 0 || number(f[3]) > 1048576 || number(f[4]) == 0 ||
-            (f[5] != "0" && f[5] != "1")) throw std::runtime_error("invalid worker capabilities");
+            (f[5] != "0" && f[5] != "1") || (f.size() == 7 && f[6] != "staging-v1"))
+            throw std::runtime_error("invalid worker capabilities");
         {
             std::lock_guard lock(registry.mutex);
             auto existing = registry.workers.find(f[0]);
@@ -274,7 +322,8 @@ void handle(net::Socket peer, Registry& registry, const std::string& token, cons
                 throw std::runtime_error("worker ID already connected");
             if (existing == registry.workers.end() && registry.workers.size() >= 64)
                 throw std::runtime_error("worker registry full");
-            registry.workers.insert_or_assign(f[0], Record{f, Clock::now(), true, nullptr, {0, 0}});
+            registry.workers.insert_or_assign(f[0], Record{
+                std::vector<std::string>(f.begin(), f.begin() + 6), Clock::now(), true, nullptr, {0, 0}, f.size() == 7});
             registered = f[0];
         }
         net::send(socket, {Type::ok, {}});
@@ -303,8 +352,7 @@ void handle(net::Socket peer, Registry& registry, const std::string& token, cons
                 // Results receive OK; assignments are delivered on heartbeats.
                 if (message.type == Type::heartbeat && record.job && record.job->state == "ASSIGNED") {
                     auto& job = *record.job;
-                    reply = {Type::assignment, {job.id, std::to_string(job.timeout)}};
-                    reply.fields.insert(reply.fields.end(), job.arguments.begin(), job.arguments.end());
+                    reply = assignment(job.id, job.timeout, job.arguments, job.files);
                     job.state = "RUNNING";
                 }
             }
@@ -380,7 +428,7 @@ int join(std::uint16_t port, const std::string& id, const std::string& host) {
     auto socket = connect_coordinator(port, host);
     net::send(socket, {Type::register_worker,
         {id, "linux", system.machine, std::to_string(cpus),
-         std::to_string(static_cast<std::uint64_t>(memory.totalram) * memory.mem_unit), "0"}});
+         std::to_string(static_cast<std::uint64_t>(memory.totalram) * memory.mem_unit), "0", "staging-v1"}});
     expect_ok(net::receive(socket));
     std::cout << "Worker " << id << " registered" << std::endl;
     std::atomic<bool> cancel{false};
@@ -394,7 +442,10 @@ int join(std::uint16_t port, const std::string& id, const std::string& host) {
         if (execution.valid() && execution.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
             ExecutionResult result;
             try { result = execution.get(); }
-            catch (const std::exception& error) { result.error = error.what(); }
+            catch (const std::exception& error) {
+                result.exit_code = 125;
+                result.error = std::string("worker execution setup failed: ") + error.what();
+            }
             net::send(socket, {Type::result, {job_id, std::to_string(result.exit_code),
                 result.output, result.error, result.timed_out ? "1" : "0", result.truncated ? "1" : "0"}});
             expect_ok(net::receive(socket));
@@ -402,15 +453,22 @@ int join(std::uint16_t port, const std::string& id, const std::string& host) {
         }
         net::send(socket, {Type::heartbeat, {}});
         auto response = net::receive(socket);
-        if (response.type == Type::assignment) {
-            if (execution.valid() || response.fields.size() < 3 || response.fields.size() > 130 ||
+        if (response.type == Type::assignment || response.type == Type::staged_assignment) {
+            if (execution.valid() || response.fields.size() < 3 ||
                 !label(response.fields[0])) throw std::runtime_error("invalid assignment");
             const auto timeout = number(response.fields[1]);
             if (timeout == 0 || timeout > 30) throw std::runtime_error("invalid execution timeout");
             job_id = response.fields[0];
-            std::vector<std::string> arguments(response.fields.begin() + 2, response.fields.end());
-            execution = std::async(std::launch::async, [arguments = std::move(arguments), timeout, &cancel] {
-                return execute(arguments, static_cast<std::uint32_t>(timeout), cancel);
+            std::size_t offset = 2;
+            std::vector<InputFile> files;
+            if (response.type == Type::staged_assignment) files = parse_inputs(response.fields, offset);
+            if (offset >= response.fields.size() || response.fields.size() - offset > 128 || response.fields[offset].empty())
+                throw std::runtime_error("invalid assignment arguments");
+            std::vector<std::string> arguments(response.fields.begin() + static_cast<std::ptrdiff_t>(offset), response.fields.end());
+            execution = std::async(std::launch::async, [arguments = std::move(arguments), files = std::move(files), timeout, &cancel] {
+                if (files.empty()) return execute(arguments, static_cast<std::uint32_t>(timeout), cancel);
+                Workspace workspace(files);
+                return execute(arguments, static_cast<std::uint32_t>(timeout), cancel, workspace.path());
             });
         } else expect_ok(response);
     }
@@ -456,33 +514,51 @@ int logs(std::uint16_t port, const std::string& id, const std::string& host) {
     return 0; // retrieval succeeded, independent of the original command's exit
 }
 
-int run(std::uint16_t port, std::uint32_t cpu, std::uint64_t memory,
-        std::uint32_t timeout, const std::vector<std::string>& arguments,
-        const std::string& host, const std::string& architecture) {
-    if (!label(architecture))
-        throw std::runtime_error("architecture must be native, any, or a 1-64 character architecture label");
-    std::string target = architecture;
-    if (architecture == "native") {
-        utsname system{};
-        if (::uname(&system) != 0) throw std::runtime_error("architecture discovery failed");
-        target = system.machine;
-    } else if (architecture == "any") target.clear();
-    Message request{Type::submit, {std::to_string(cpu), std::to_string(memory),
-        std::to_string(timeout), "linux", target}};
-    request.fields.insert(request.fields.end(), arguments.begin(), arguments.end());
+void validate_task(const TaskRequest& task) {
+    submission(task);
+}
+TaskResult submit_task(std::uint16_t port, const std::string& host, const TaskRequest& task) {
+    const auto request = submission(task);
     auto socket = connect_coordinator(port, host);
     net::send(socket, request);
-    auto result = net::receive(socket, std::chrono::seconds(45));
+    const auto result = net::receive(socket, std::chrono::seconds(45));
     if (result.type == Type::error && result.fields.size() == 1)
-        throw std::runtime_error(result.fields.front());
-    if (result.type != Type::result || result.fields.size() != 6 || number(result.fields[1]) > 255)
+        return {{}, 1, {}, result.fields[0], false, false, true};
+    const auto& fields = result.fields;
+    if (result.type != Type::result || fields.size() != 6 || !label(fields[0]) || number(fields[1]) > 255 ||
+        fields[2].size() > 16384 || fields[3].size() > 16384 ||
+        (fields[4] != "0" && fields[4] != "1") || (fields[5] != "0" && fields[5] != "1"))
         throw std::runtime_error("invalid job result");
-    const auto& f = result.fields;
-    std::cerr << "[forge] " << f[0] << " exit=" << f[1] << '\n';
-    std::cout << f[2];
-    std::cerr << f[3];
-    if (f[4] == "1") std::cerr << "[forge] execution timed out\n";
-    if (f[5] == "1") std::cerr << "[forge] output truncated at 16384 bytes per stream\n";
-    return static_cast<int>(number(f[1]));
+    return {fields[0], static_cast<int>(number(fields[1])), fields[2], fields[3],
+            fields[4] == "1", fields[5] == "1", false};
+}
+std::size_t staging_worker_count(std::uint16_t port, const std::string& host, const TaskRequest& task) {
+    const auto architecture = target_architecture(task.architecture);
+    auto socket = connect_coordinator(port, host);
+    net::send(socket, {Type::worker_capabilities, {}});
+    const auto response = net::receive(socket);
+    if (response.type != Type::capability_snapshot || response.fields.size() % 8 != 0)
+        throw std::runtime_error("coordinator does not support staging capability discovery");
+    std::size_t count = 0;
+    const auto& f = response.fields;
+    for (std::size_t i = 0; i < f.size(); i += 8) {
+        const auto cpu = number(f[i + 3]);
+        if (cpu == 0 || cpu > 1048576) throw std::runtime_error("invalid worker CPU capacity");
+        Worker worker{f[i], f[i + 1], f[i + 2],
+            {static_cast<std::uint32_t>(cpu), number(f[i + 4])}, {0, 0}, f[i + 5] == "1",
+            f[i + 6] == "READY" && f[i + 7] == "staging-v1"};
+        if (!rejection(worker, {"linux", architecture, {task.cpu, task.memory}, false})) ++count;
+    }
+    return count;
+}
+int run(std::uint16_t port, const std::string& host, const TaskRequest& task) {
+    const auto result = submit_task(port, host, task);
+    if (result.infrastructure_error) throw std::runtime_error(result.error);
+    std::cerr << "[forge] " << result.job_id << " exit=" << result.exit_code << '\n';
+    std::cout << result.output;
+    std::cerr << result.error;
+    if (result.timed_out) std::cerr << "[forge] execution timed out\n";
+    if (result.truncated) std::cerr << "[forge] output truncated at 16384 bytes per stream\n";
+    return result.exit_code;
 }
 }

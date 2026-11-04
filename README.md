@@ -68,10 +68,10 @@ has local-process and Docker-bridge tests; physical-machine validation is pendin
 The worker currently reports system CPU/RAM totals without accounting for
 container limits and advertises CUDA as unavailable.
 
-`run` executes trusted commands already installed on a worker. Captured output is
+`run` executes trusted commands, with optional bounded flat-file staging. Captured output is
 limited to 16 KiB per stream, and runtime to 30 seconds. CPU/RAM reservations are
-not OS-enforced limits. File staging, sandboxing, batch mapping,
-persistent history and automatic retries are not implemented yet. Optional loopback
+not OS-enforced limits. General dependency packaging, sandboxing,
+persistent history and automatic retries are not implemented yet. Optional additional
 authentication uses `FORGE_TOKEN`; see [authentication](docs/authentication.md)
 and the [recovery audit](docs/recovery-audit.md).
 
@@ -80,6 +80,23 @@ Use `--arch aarch64` or `--arch x86_64` to target a worker explicitly. For comma
 whose installed programs and dependencies support all eligible Linux workers,
 `--arch any` allows placement on any architecture. This does not translate binaries
 or install dependencies. See [execution](docs/execution.md) for the exact contract.
+
+## Stage and map inputs
+
+With a coordinator and staging-capable workers running, from the repository:
+
+```sh
+./build/forge map --arch any --file examples/map/summarize.py \
+  --output ./map-results examples/map/inputs/*.json -- python3 summarize.py '{}'
+```
+
+This stages a shared Python script and one JSON input per task, runs compatible
+tasks in parallel, and writes indexed stdout/stderr plus results.jsonl. Workers
+need Python 3 installed. The sample data demonstrates the workflow; it is not a
+performance benchmark. Use --host with the existing TLS environment for remote
+endpoints. See [batch workloads](docs/batch-workloads.md) for limits and semantics:
+16 flat files / 32 KiB per task, 256 inputs per batch, up to 16 in-flight tasks,
+no automatic retries, and a new output directory for each invocation.
 
 ## Test a networked cluster locally
 
@@ -90,7 +107,8 @@ python scripts/test-container-cluster.py
 ```
 
 This starts four temporary containers on a private bridge, verifies mutual TLS,
-placement on two workers, output inspection, and worker loss, then cleans up.
+placement on two workers, staged map from CLI-only source files, output inspection,
+workspace cleanup, and worker loss, then cleans up.
 It is a network integration test on one host, not a physical-cluster benchmark.
 
 ## Inspect jobs after execution

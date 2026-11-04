@@ -74,6 +74,8 @@ try:
         (1, ["intruder", "linux", "x86_64", "2", "4096", "0"]),
         (3, []), (7, ["1", "0", "1", "linux", "x86_64", "/bin/true"]),
         (10, []), (11, ["job-1"]), (13, []),
+        (14, ["1", "0", "1", "linux", "", "1", "input", "0", "data", "/bin/true"]),
+        (16, []),
         (13, [token, "extra"]), (13, ["x" * len(token)]),
     ):
         with socket.create_connection(("127.0.0.1", port), timeout=4) as sock:

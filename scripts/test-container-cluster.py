@@ -1,6 +1,7 @@
 """Verify Forge over a private Docker bridge; this is not a physical-machine benchmark."""
 import argparse
 import concurrent.futures
+import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -82,13 +83,38 @@ def main():
             raise RuntimeError("bridge job inspection failed")
         if execute(client, "client", binary, "logs", "job-1", "--host", host).stdout.strip() not in expected:
             raise RuntimeError("bridge log retrieval failed")
+        analysis = ("import json,os,pathlib,socket,sys,time\n"
+                    "print(json.dumps({'host':socket.gethostname(),'cwd':os.getcwd(),"
+                    "'value':pathlib.Path(sys.argv[1]).read_text(),'source_visible':pathlib.Path('/tmp/batch-inputs').exists()}))\n"
+                    "time.sleep(.8)\n")
+        docker("exec", client, "python3", "-c",
+               "import sys; from pathlib import Path; p=Path('/tmp/batch-inputs'); p.mkdir(); "
+               "[(p/f'{i}.txt').write_text(str(i)) for i in range(4)]; "
+               "(p/'analyze.py').write_text(sys.argv[1])", analysis)
+        execute(client, "client", binary, "map", "--host", host, "--arch", "any",
+                "--file", "/tmp/batch-inputs/analyze.py", "--output", "/tmp/batch-results",
+                *[f"/tmp/batch-inputs/{i}.txt" for i in range(4)], "--", "python3", "analyze.py", "{}")
+        batch = json.loads(docker("exec", client, "python3", "-c",
+            "import json,pathlib; p=pathlib.Path('/tmp/batch-results'); "
+            "rows=[json.loads(s) for s in (p/'results.jsonl').read_text().splitlines()]; "
+            "assert all(r['state']=='SUCCEEDED' for r in rows); "
+            "print(json.dumps([json.loads((p/r['stdout']).read_text()) for r in rows]))").stdout)
+        if {row["host"] for row in batch} != expected or [row["value"] for row in batch] != ["0", "1", "2", "3"]:
+            raise RuntimeError("staged map did not distribute or preserve input/result association")
+        if any(row["source_visible"] for row in batch):
+            raise RuntimeError("worker could see CLI fixture directory; staging test is invalid")
+        for name in (worker_a, worker_b):
+            hostname = docker("inspect", "--format", "{{.Config.Hostname}}", name).stdout.strip()
+            paths = [row["cwd"] for row in batch if row["host"] == hostname]
+            docker("exec", name, "python3", "-c",
+                   "import pathlib,sys; assert not any(pathlib.Path(p).exists() for p in sys.argv[1:])", *paths)
         plaintext = docker("exec", client, binary, "cluster", "--host", host, check=False)
         if plaintext.returncode == 0 or "require mutual TLS" not in plaintext.stderr:
             raise RuntimeError("remote plaintext policy bypassed")
         docker("stop", "--time", "2", worker_a)
         wait_for(lambda: "DEAD" in cluster().stdout, "worker-container loss not detected")
         execute(client, "client", binary, "run", "--host", host, "--", "/bin/true")
-        print("PASS: mutual TLS across four containers on a private bridge; two-worker placement, results, ps/logs, loss, remaining capacity.")
+        print("PASS: mutual TLS across four containers; placement, staged map from CLI-only files, ordered results, workspace cleanup, ps/logs, loss, remaining capacity.")
         print("This verifies separate network namespaces on one Docker host, not separate physical machines or performance.")
     finally:
         for name in reversed(created):
