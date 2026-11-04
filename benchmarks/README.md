@@ -200,3 +200,10 @@ preserves every trial of a small Release experiment on one Docker host. Forge wa
 slower than both local baselines for that short workload. Its original dirty flag
 and the cross-platform CRLF/Git explanation remain intact. It is a starting point
 for profiling, not a physical-machine or representative-application claim.
+
+The [controlled old/new comparison](results/2026-11-03-local-002/README.md)
+interleaves both complete runtimes and local baselines. With pending-heartbeat
+dispatch and completion notifications, two-worker median four-task time fell
+75.81% (2.0432 s to 0.4943 s), approximately matching direct local parallel
+execution (0.5075 s). All 144 executions including warmups and baselines passed.
+This remains one shared Docker host and a short synthetic workload.

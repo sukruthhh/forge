@@ -17,6 +17,14 @@ an optional additional gate. Includes scheduler/protocol tests, TCP, TLS, and
 execution integration tests, and Linux CI. No physical-cluster benchmark results
 exist. See [protocol details](docs/protocol.md) and [execution limits](docs/execution.md).
 
+Bounded file staging and `forge map` support independent parallel inputs with
+ordered result artifacts. `forge timings JOB` exposes defined runtime phases.
+A [controlled local synthetic comparison](benchmarks/results/2026-11-03-local-002/README.md)
+measured a 75.8% reduction in two-worker median batch time after removing periodic
+dispatch/completion waits. This used one Docker host; current performance was
+approximately level with direct local parallel execution. Raw trials and
+limitations are included. Physical-machine scaling remains unverified.
+
 See [the canonical framework](docs/canonical-framework.md) and
 [architecture decisions](docs/architecture.md).
 

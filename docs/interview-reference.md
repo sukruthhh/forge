@@ -696,3 +696,22 @@ Release (82.11 seconds). The four-container TLS integration also passed staged
 map, ordered artifacts, cleanup, external benchmark smoke, inspection and worker
 loss checks. These establish regression correctness, not performance or physical
 machine scaling.
+
+Measured comparison: [raw evidence and reproduction](../benchmarks/results/2026-11-03-local-002/README.md).
+The old bdde513 runtime and updated c0491fb runtime ran in the same two-CPU,
+2 GiB Docker container with mutual TLS. Six profiles (direct sequential/parallel,
+old/new one-worker/two-worker), one warmup plus five measured rounds, and four
+identical inputs produced 144 validated executions, including 120 measured.
+Two-worker median batch time decreased 75.81% (2.0432 s to 0.4943 s); direct
+parallel took 0.5075 s. One-worker median decreased 76.20% (3.9948 s to 0.9507 s).
+The current runtime approximately matches direct local parallel execution here.
+This is evidence of removing runtime latency, not a claim that Forge beats direct
+processes or scales across physical machines. Phase collection occurs after batch
+timing; old/new phase attribution is unavailable because the old worker lacks it.
+
+Potential XYZ resume bullet, with the scope retained: "Reduced median four-task
+batch latency 76% (2.04 s to 0.49 s) in a two-worker local synthetic TLS benchmark
+by replacing periodic worker polling with condition-variable dispatch and
+completion wakeups." Broader distributed-performance claims require physical
+tests and real workloads. All raw samples, background-load and CRLF provenance
+caveats remain in the report; independent arithmetic and digest checks passed.

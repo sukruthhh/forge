@@ -45,6 +45,13 @@ suites (82.11 seconds), and the four-container TLS test passed locally. The harn
 now supports shuffled complete-runtime old/new comparisons and optional post-batch
 phase collection. Performance impact requires an actual comparison experiment.
 
+The [reviewed old/new experiment](../benchmarks/results/2026-11-03-local-002/README.md)
+now supplies that comparison: two-worker median four-task batch time decreased
+75.81%, from 2.0432 s to 0.4943 s, across five measured rounds plus one warmup.
+Direct parallel execution took 0.5075 s. All 144 task executions across six profiles
+passed validation. This is a scoped local synthetic optimization result; physical
+scaling, representative workloads and fault recovery metrics remain unverified.
+
 | Milestone | Completion evidence still required |
 |---|---|
 | A: actual cross-machine execution | TLS execution on separate physical Linux machines; record command origin, failures, and results |
