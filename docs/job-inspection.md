@@ -4,10 +4,18 @@ Run these against the same coordinator used to submit work:
 
     forge ps
     forge logs job-1
+    forge timings job-1
 
 Both accept --port PORT. ps shows ID, STATE, WORKER, EXIT, and a bounded command
 summary. summaries replace control/non-ASCII bytes with ? for display and are not
 a shell-escaped reconstruction of argv. stdout/stderr in logs remain binary-safe.
+
+timings prints JSON durations in seconds for queue, dispatch wait/write,
+assignment-to-terminal, and worker prepare/execute/cleanup/result-wait phases.
+It accepts --host and --port, requires the same authentication as other inspection,
+and uses the same active-job/history retention. Unfinished or unavailable phases
+are null, including legacy worker telemetry. These are per-host monotonic durations;
+some intervals overlap. See [protocol.md](protocol.md) for precise boundaries.
 
 ## States and semantics
 

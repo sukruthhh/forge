@@ -38,13 +38,22 @@ require(benchmark.percentile([1, 2, 3, 4], .5) == 2 and benchmark.percentile([1,
 with tempfile.TemporaryDirectory() as temporary:
     output = Path(temporary) / "successful"
     result = invoke(output, "--workers", "1", "2", "--tasks", "2", "--limit", "1000", "--step", "100",
-                    "--repetitions", "2", "--warmups", "1", "--timeout", "5")
+                    "--repetitions", "2", "--warmups", "1", "--timeout", "5", "--collect-phases",
+                    "--compare-binary", binary, "--comparison-source", "same-binary-test")
     require(result.returncode == 0, result.stdout + result.stderr)
     metadata = json.loads((output / "metadata.json").read_text())
     summary = json.loads((output / "summary.json").read_text())
     trials = [json.loads(line) for line in (output / "trials.jsonl").read_text().splitlines()]
-    configurations = benchmark.profiles([1, 2])
-    require(summary["valid"] and len(trials) == 12, "missing warmups or measured trials")
+    configurations = benchmark.profiles([1, 2], True)
+    require(summary["valid"] and len(trials) == 18, "missing warmups or measured trials")
+    require(metadata["comparison_binary"]["binary_sha256"] == metadata["binary_sha256"], "comparison provenance missing")
+    for name in ("forge-1", "forge-2"):
+        report = summary["profiles"][name]
+        require(report["phase_samples"] == 4 and all(benchmark.number(v) for v in report["phase_median_seconds"].values()),
+                "requested phase observations missing")
+        previous = summary["profiles"]["comparison-" + name]
+        require(abs(report["speedup_vs_comparison"] - previous["batch_median_seconds"] / report["batch_median_seconds"]) < 1e-9,
+                "comparison ratio changed samples")
     require(metadata["cluster_kind"] == "local-processes" and not metadata["topology_is_user_declared"],
             "managed process test mislabeled as physical cluster")
     require(metadata["configuration"]["transport"] == "tls" and metadata["credential_values_recorded"] is False,
@@ -85,6 +94,10 @@ with tempfile.TemporaryDirectory() as temporary:
     require(summary["profiles"]["forge-2"]["speedup_vs_sequential"] is None, "failed baseline warmup hidden")
     incomplete = benchmark.summarize(trials[:-1], configurations, 2, 1)
     require(not incomplete["valid"], "incomplete experiment reported as complete")
+    corrupt = copy.deepcopy(trials)
+    next(t for t in corrupt if t["profile"] == "comparison-forge-2")["valid"] = False
+    require(benchmark.summarize(corrupt, configurations, 2, 1)["profiles"]["forge-2"]["speedup_vs_comparison"] is None,
+            "failed comparison trial hidden")
     previous = (output / "metadata.json").read_bytes()
     require(invoke(output, "--workers", "1").returncode != 0 and (output / "metadata.json").read_bytes() == previous,
             "existing benchmark results overwritten")

@@ -21,7 +21,7 @@ repeated fields:
 ```
 
 Fields are binary-safe at the framing layer. Schema validation applies separately.
-Unknown versions/types (outside 1..17), excess fields, trailing bytes, truncated fields, and
+Unknown versions/types (outside 1..20), excess fields, trailing bytes, truncated fields, and
 out-of-range lengths are errors. Reads/writes handle fragmentation and coalescing.
 Each receive shares one absolute monotonic deadline across header and body;
 receiving a few bytes does not reset it. Sending suppresses SIGPIPE and uses a
@@ -33,7 +33,7 @@ message IDs are identical inside TLS; no plaintext negotiation or fallback exist
 
 | ID | Name | Fields |
 |---|---|---|
-| 1 | REGISTER | ID, OS, architecture, CPU decimal, RAM bytes decimal, CUDA `0`/`1`; optional seventh field `staging-v1` |
+| 1 | REGISTER | ID, OS, architecture, CPU decimal, RAM bytes decimal, CUDA `0`/`1`; optional ordered extensions `staging-v1`, `longpoll-v1`, `timing-v1` |
 | 2 | HEARTBEAT | None; belongs to the registered connection |
 | 3 | CLUSTER | None; first message on a separate client connection |
 | 4 | OK | None |
@@ -51,7 +51,12 @@ affinity yet. Claimed resources are not enforced or authenticated.
 
 A client must register, submit a job, or request a snapshot within three seconds. Registration
 receives OK. The worker sends a heartbeat approximately every 500 ms and waits for
-OK (or an assignment) before sending the next. A registered session has a two-second receive deadline.
+OK (or an assignment) before sending the next. Idle workers advertising longpoll-v1
+send the next heartbeat immediately: the coordinator holds its response for up to
+500 ms, waking when scheduling assigns work. Running workers keep the 500-ms
+heartbeat interval and receive immediate OK responses. Completion wakes the
+worker's connection-owning thread rather than waiting for the next heartbeat.
+A registered session has a two-second receive deadline.
 Any unexpected message is rejected. There is no automatic reconnect loop yet.
 
 Snapshot states use elapsed time since registration or the last valid heartbeat:
@@ -104,3 +109,35 @@ Only staging-capable workers may receive type 15. Updated join advertises the
 feature; it requires an updated coordinator. Older coordinators reject these
 extensions rather than silently executing without files. Authentication gates
 all new application requests. See [batch workloads](batch-workloads.md).
+
+## Immediate dispatch and phase inspection
+
+Registration accepts six through nine fields. Extensions occupy exact positions:
+seventh staging-v1, eighth longpoll-v1, ninth timing-v1. Six/seven-field workers
+retain immediate heartbeat replies and ordinary RESULT messages. Eight-field
+workers use held idle heartbeats with ordinary results. Nine-field workers must
+send PROFILED_RESULT. The stock worker advertises all three extensions and requires
+an updated coordinator; there is no fallback to an older coordinator.
+
+| ID | Name | Fields |
+|---|---|---|
+| 18 | TIMINGS | One job ID; authenticated inspection request |
+| 19 | TIMING_SNAPSHOT | Job ID, state, eight duration fields below |
+| 20 | PROFILED_RESULT | Original six RESULT fields, then worker prepare, execute, cleanup, and result-wait durations |
+
+Durations on the wire are unsigned decimal microseconds; each worker interval
+must be at most 60 seconds. TIMING_SNAPSHOT fields are queue, dispatch wait,
+dispatch write, assignment-to-terminal, worker prepare, worker execute, worker
+cleanup, worker result wait. Empty fields mean unavailable, including unfinished
+intervals and worker telemetry for legacy workers or lost jobs. Ordinary client
+results and retained logs still use the original six-field RESULT schema.
+
+Coordinator durations use its monotonic clock: queue admission to reservation;
+reservation to assignment write start; assignment write duration; reservation to
+terminal transition. Worker durations use its own monotonic clock: assignment
+receipt through staging/async startup; the execute call including process/output
+handling; workspace destruction; cleanup completion to result construction on the
+connection thread. Result wait excludes socket write/ACK time. Worker values are
+reported telemetry, not independently authenticated execution evidence. Clocks
+are never subtracted across hosts. Intervals overlap and cannot all be summed;
+these do not measure one-way network latency or isolate pure scheduling cost.

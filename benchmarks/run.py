@@ -2,6 +2,7 @@
 import argparse
 import base64
 import concurrent.futures
+import copy
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
@@ -165,6 +166,8 @@ def local_trial(directory, tasks, paths, jobs, timeout, expected, workload_hash)
 
 
 def forge_command(args, host, port, *command):
+    if command[0] == "timings":
+        return [str(args.binary), *command, "--host", host, "--port", str(port)]
     return [str(args.binary), command[0], "--host", host, "--port", str(port), *command[1:]]
 
 
@@ -273,14 +276,29 @@ def forge_trial(args, directory, tasks, paths, jobs, host, port, environment, ex
             row.update(valid=False, diagnostic="missing, invalid, or duplicate job identity")
         if isinstance(job_id, str):
             job_ids.add(job_id)
+        if args.collect_phases and not getattr(args, "comparison_profile", False):
+            timing = subprocess.run(forge_command(args, host, port, "timings", job_id), env=environment,
+                                    capture_output=True, text=True, timeout=8)
+            (directory / f"{stem}.timings.json").write_text(timing.stdout)
+            value = json.loads(timing.stdout, parse_float=finite_float, parse_constant=reject_constant)
+            if (timing.returncode or value.get("job_id") != job_id or value.get("state") != "SUCCEEDED"
+                or not all(number(value.get(key)) for key in PHASES)):
+                raise RuntimeError("missing or invalid requested phase measurements")
+            row["phases"] = value
         rows.append(row)
     return elapsed, rows, result.returncode, command
 
 
-def profiles(workers):
+PHASES = ("queue_seconds", "dispatch_wait_seconds", "dispatch_write_seconds", "assigned_to_terminal_seconds",
+          "worker_prepare_seconds", "worker_execute_seconds", "worker_cleanup_seconds", "worker_result_wait_seconds")
+
+
+def profiles(workers, comparison=False):
     result = [{"name": "local-sequential", "kind": "local", "jobs": 1}]
     result.extend({"name": f"local-parallel-{n}", "kind": "local", "jobs": n} for n in workers if n != 1)
     result.extend({"name": f"forge-{n}", "kind": "forge", "jobs": n} for n in workers)
+    if comparison:
+        result.extend({"name": f"comparison-forge-{n}", "kind": "comparison", "jobs": n} for n in workers)
     return result
 
 
@@ -308,6 +326,9 @@ def summarize(trials, configurations, repetitions, warmups):
             "task_latency_samples": len(latencies),
             "compute_median_seconds": statistics.median(t["observed"]["compute_seconds"] for t in tasks) if valid else None,
             "process_cpu_seconds_total": sum(t["observed"]["cpu_seconds"] for t in tasks) if valid else None,
+            "phase_samples": sum("phases" in task for task in tasks),
+            "phase_median_seconds": {key: statistics.median(task["phases"][key] for task in tasks) for key in PHASES}
+                if valid and tasks and all("phases" in task for task in tasks) else None,
         }
     baseline = summaries["local-sequential"]
     for profile in configurations:
@@ -317,6 +338,11 @@ def summarize(trials, configurations, repetitions, warmups):
             usable = report["valid"] and comparison["valid"]
             report[f"speedup_vs_{label}"] = comparison["batch_median_seconds"] / report["batch_median_seconds"] if usable else None
             report[f"time_reduction_pct_vs_{label}"] = 100 * (1 - report["batch_median_seconds"] / comparison["batch_median_seconds"]) if usable else None
+        previous = summaries.get(f"comparison-forge-{profile['jobs']}") if profile["kind"] == "forge" else None
+        if previous is not None:
+            usable = report["valid"] and previous["valid"]
+            report["speedup_vs_comparison"] = previous["batch_median_seconds"] / report["batch_median_seconds"] if usable else None
+            report["time_reduction_pct_vs_comparison"] = 100 * (1 - report["batch_median_seconds"] / previous["batch_median_seconds"]) if usable else None
     return {"schema": 1, "valid": all(report["valid"] for report in summaries.values()), "profiles": summaries,
             "percentile_method": "nearest rank, ceil(p*n), task submission-to-result samples; not dispatch latency",
             "comparison_method": "ratio of median measured batch durations; negative time reductions are retained"}
@@ -325,6 +351,9 @@ def summarize(trials, configurations, repetitions, warmups):
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
+    parser.add_argument("--compare-binary", type=Path, help="interleave an older complete runtime in managed mode")
+    parser.add_argument("--comparison-source", help="user-declared source revision for the comparison binary; not an attestation")
+    parser.add_argument("--collect-phases", action="store_true", help="inspect current-runtime job phases after each timed batch")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--environment-kind", required=True, choices=("native-linux", "wsl", "container", "vm"))
     parser.add_argument("--label", required=True)
@@ -344,6 +373,12 @@ def parse_args():
     parser.add_argument("--worker-python", help="interpreter available on all workers; defaults to this interpreter locally, python3 externally")
     args = parser.parse_args()
     args.binary, args.output = args.binary.resolve(), args.output.resolve()
+    if args.compare_binary:
+        args.compare_binary = args.compare_binary.resolve()
+        if not args.compare_binary.is_file() or args.host or not args.comparison_source:
+            parser.error("comparison needs an existing binary, --comparison-source, and managed mode")
+    elif args.comparison_source:
+        parser.error("--comparison-source requires --compare-binary")
     if sys.platform != "linux":
         parser.error("run the benchmark inside Linux, WSL, or the development container")
     if not args.binary.is_file() or args.output.exists():
@@ -365,6 +400,13 @@ def parse_args():
 def main():
     args = parse_args()
     metadata = provenance(args)
+    if args.compare_binary:
+        previous = copy.copy(args)
+        previous.binary = args.compare_binary
+        metadata["comparison_binary"] = {key: value for key, value in provenance(previous).items()
+                                         if key in ("binary_sha256", "build_type", "compiler", "source_commit_is_binary_attestation")}
+        metadata["comparison_binary"]["declared_source"] = args.comparison_source
+    metadata["phase_boundary"] = "optional job inspection occurs after the batch clock; worker phases are reported durations; coordinator phases overlap and must not be summed"
     args.output.mkdir(mode=0o700)
     (args.output / "metadata.json").write_text(json_text(metadata))
     input_directory = args.output / "inputs"
@@ -374,7 +416,7 @@ def main():
     paths = [input_directory / f"task-{task['task']:04}.json" for task in tasks]
     for task, path in zip(tasks, paths):
         path.write_text(json_text(task))
-    configurations = profiles(args.workers)
+    configurations = profiles(args.workers, bool(args.compare_binary))
     trials = []
     randomizer = random.Random(args.seed)
     workload_hash = digest(WORKLOAD)
@@ -403,8 +445,13 @@ def main():
                             trial["batch_seconds"], trial["tasks"] = local_trial(directory, tasks, paths, profile["jobs"], args.timeout, expected, workload_hash)
                             trial["valid"] = all(row["valid"] for row in trial["tasks"])
                         else:
+                            trial_args = copy.copy(args)
+                            trial_args.comparison_profile = profile["kind"] == "comparison"
+                            if trial_args.comparison_profile:
+                                trial_args.binary = args.compare_binary
+                            trial["binary_sha256"] = digest(trial_args.binary)
                             def measure(host, port, environment, snapshot, expected_pids):
-                                elapsed, rows, exit_code, command = forge_trial(args, directory, tasks, paths, profile["jobs"], host, port, environment, expected, workload_hash)
+                                elapsed, rows, exit_code, command = forge_trial(trial_args, directory, tasks, paths, profile["jobs"], host, port, environment, expected, workload_hash)
                                 trial.update(batch_seconds=elapsed, tasks=rows, cli_exit_code=exit_code, command=command, cluster_snapshot=snapshot)
                                 identities = {(row["observed"]["host"], row["observed"]["worker_pid"]) for row in rows if row["valid"]}
                                 trial["worker_identities"] = sorted(identities)
@@ -417,7 +464,7 @@ def main():
                                 snapshot = cluster_snapshot(args, args.host, args.port, os.environ.copy(), profile["jobs"])
                                 measure(args.host, args.port, os.environ.copy(), snapshot, None)
                             else:
-                                with managed_cluster(args, profile["jobs"], credentials, directory) as cluster:
+                                with managed_cluster(trial_args, profile["jobs"], credentials, directory) as cluster:
                                     measure(*cluster)
                     except Exception as error:
                         trial["valid"] = False

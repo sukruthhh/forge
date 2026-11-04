@@ -162,3 +162,21 @@ raw task streams, provenance, identities, and timing definitions. Start with a
 deterministic synthetic CPU workload to expose runtime overhead; real-application
 and physical-machine claims require separate experiments. See
 [benchmark methodology](../benchmarks/README.md).
+
+## 011: Wake dispatch and completion without sharing a socket
+
+Hold an idle worker's heartbeat response for at most 500 ms using the registry
+condition variable, releasing its mutex while waiting. Reservation notifies that
+condition variable, so a pending request can receive an assignment immediately.
+Running workers keep their heartbeat cadence. A separate condition variable wakes
+the worker connection thread on completion. Execution never accesses the socket
+or SSL object. This removes timer-driven waits without adding socket writers.
+
+Explicit registration extensions preserve old workers on updated coordinators;
+new workers require an updated coordinator. Handler bounds, liveness deadlines,
+and single socket ownership remain. Stop checks use bounded waits and deadlines.
+Retain monotonic phase durations with job history, leaving unavailable values
+null. Normalize extended worker results to the original client/log schema.
+Reported worker durations are telemetry, not proof; clocks are not subtracted
+across hosts and overlapping intervals cannot be summed. Compare complete old/new
+runtimes in shuffled rounds before claiming improvement. See [protocol.md](protocol.md).

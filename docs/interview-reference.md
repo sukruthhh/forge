@@ -665,3 +665,34 @@ source, native container result storage, shared-host load, and limited sample si
 Profile the 500-ms worker polling path and other phases before assigning the whole
 difference to a component or claiming an improvement. Physical/real-workload and
 recovery/utilization evidence remains pending.
+
+## Immediate dispatch and observable runtime phases
+
+The original worker slept on a 500-ms cadence before checking results and asking
+for assignments. An idle heartbeat can now remain pending on the coordinator for
+up to 500 ms. Scheduling wakes the handler through the registry condition variable,
+which releases the mutex while waiting. The existing handler sends the assignment;
+execution completion wakes the worker's connection thread through a separate
+condition variable. Only that thread touches its socket/SSL object. Running jobs
+retain periodic heartbeats. There is no new push stream or concurrent socket writer.
+
+Exact ordered registration extensions select held heartbeats and profiled results.
+Legacy workers remain usable on the updated coordinator; updated workers require
+an updated coordinator. Extended worker results are normalized before client
+delivery/history so run, map and logs keep their result schema. Authenticated
+forge timings inspection returns per-host monotonic durations with unavailable
+values represented as null. Reported worker timings are not independently proven;
+no cross-host timestamps are subtracted and overlapping intervals are not additive.
+
+The benchmark harness can interleave complete old/new runtimes and direct baselines
+in the same shuffled rounds, recording both executable hashes and declared source
+provenance. Optional phase inspection runs after batch timing. An invalid old/new
+profile suppresses its comparison rather than filtering failures. Functional CI
+checks pending-heartbeat dispatch, legacy results, invalid telemetry, repeated task
+completion, running heartbeats and shutdown; it imposes no speed threshold.
+
+Local validation: all eleven CTest suites passed in Debug (82.81 seconds) and
+Release (82.11 seconds). The four-container TLS integration also passed staged
+map, ordered artifacts, cleanup, external benchmark smoke, inspection and worker
+loss checks. These establish regression correctness, not performance or physical
+machine scaling.

@@ -111,6 +111,23 @@ do not turn a smoke run or one favorable median into a resume performance claim.
 
 ## Reports and provenance
 
+For a controlled runtime comparison, add --compare-binary /path/to/old/forge and
+--comparison-source COMMIT. Managed mode interleaves comparison-forge-N profiles
+with the current runtime and direct baselines, using the same shuffled rounds,
+inputs, transport and limits. The comparison binary runs its own coordinator,
+workers and CLI. Both binaries' hashes, compiler/build settings and the declared
+comparison revision are recorded; a revision label is not a binary attestation.
+An invalid comparison suppresses the corresponding old/new ratio. External mode
+rejects this option because it cannot replace an existing cluster's daemons.
+
+--collect-phases queries current-runtime job timings after each timed map batch.
+It stores per-task phase JSON and reports measured-task phase medians only with
+complete coverage. Comparison binaries are not queried. Missing or invalid
+requested telemetry invalidates the trial. Inspection is outside the batch clock
+but adds between-trial activity, so disclose it. Worker phases are reported values;
+coordinator intervals overlap and all phases must not be added together. This
+option does not turn submission latency into pure scheduler overhead.
+
 | File | Contents |
 |---|---|
 | metadata.json | Actual configuration, environment label, Git commit/dirty state, binary/workload hashes, compiler/build type, control-host OS/CPU/affinity/cgroup limits, Python version, measurement boundaries |

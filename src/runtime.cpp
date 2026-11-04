@@ -17,6 +17,7 @@
 #include <map>
 #include <mutex>
 #include <memory>
+#include <optional>
 #include <poll.h>
 #include <stdexcept>
 #include <sys/socket.h>
@@ -120,6 +121,8 @@ struct Job {
     std::string state = "QUEUED";
     std::string worker;
     Clock::time_point assigned_at{};
+    Clock::time_point queued_at{}, dispatch_started{}, dispatch_finished{}, completed_at{};
+    std::optional<std::array<std::uint64_t, 4>> worker_phases;
     Message completion{Type::error, {"job unfinished"}};
     bool terminal = false;
 };
@@ -130,6 +133,8 @@ struct Record {
     std::shared_ptr<Job> job;
     Resources reserved{0, 0};
     bool staging = false;
+    bool long_poll = false;
+    bool profiling = false;
 };
 struct Registry {
     std::mutex mutex;
@@ -144,6 +149,7 @@ void finish(Registry& registry, Record& record, Message result) {
     if (!record.job->terminal) {
         record.job->completion = std::move(result);
         record.job->terminal = true;
+        record.job->completed_at = Clock::now();
         const auto& completion = record.job->completion;
         record.job->state = completion.type == Type::error ? "LOST" :
             completion.fields[4] == "1" ? "TIMED_OUT" :
@@ -174,6 +180,7 @@ void schedule(Registry& registry) {
         record.reserved = job->requirements.resources;
         job->state = "ASSIGNED";
         job->assigned_at = Clock::now();
+        registry.changed.notify_all();
     }
 }
 void submit(net::Connection& connection, Registry& registry, const Message& message) {
@@ -201,6 +208,7 @@ void submit(net::Connection& connection, Registry& registry, const Message& mess
         std::unique_lock lock(registry.mutex);
         if (registry.jobs.size() >= 128) throw std::runtime_error("job queue full");
         job->id = "job-" + std::to_string(registry.next_job++);
+        job->queued_at = Clock::now();
         registry.jobs.emplace(job->id, job);
         const auto queued_at = Clock::now();
         schedule(registry);
@@ -208,6 +216,7 @@ void submit(net::Connection& connection, Registry& registry, const Message& mess
             registry.changed.wait_for(lock, std::chrono::milliseconds(100));
             if (job->state == "QUEUED" && Clock::now() - queued_at >= std::chrono::seconds(5)) {
                 job->terminal = true;
+                job->completed_at = Clock::now();
                 job->state = "UNSCHEDULABLE";
                 job->completion = {Type::error, {job->id + ": no available compatible worker within 5 seconds"}};
             }
@@ -216,6 +225,7 @@ void submit(net::Connection& connection, Registry& registry, const Message& mess
             job->state = "CANCELLED";
             job->completion = {Type::error, {job->id + ": coordinator stopping"}};
             job->terminal = true;
+            job->completed_at = Clock::now();
         }
         registry.jobs.erase(job->id);
         job->files.clear();
@@ -248,6 +258,18 @@ std::string summary(const std::vector<std::string>& arguments) {
     }
     return text;
 }
+std::string interval(Clock::time_point begin, Clock::time_point end) {
+    if (begin == Clock::time_point{} || end == Clock::time_point{} || end < begin) return {};
+    return std::to_string(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
+}
+Message timing_snapshot(const Job& job) {
+    Message result{Type::timing_snapshot, {job.id, job.state,
+        interval(job.queued_at, job.assigned_at), interval(job.assigned_at, job.dispatch_started),
+        interval(job.dispatch_started, job.dispatch_finished), interval(job.assigned_at, job.completed_at)}};
+    for (std::size_t i = 0; i < 4; ++i)
+        result.fields.push_back(job.worker_phases ? std::to_string((*job.worker_phases)[i]) : "");
+    return result;
+}
 Message inspect(Registry& registry, const Message& request) {
     std::lock_guard lock(registry.mutex);
     if (request.type == Type::jobs && request.fields.empty()) {
@@ -262,16 +284,18 @@ Message inspect(Registry& registry, const Message& request) {
         for (const auto& job : registry.history) append(job);
         return reply;
     }
-    if (request.type != Type::logs || request.fields.size() != 1 || !label(request.fields[0]))
+    if ((request.type != Type::logs && request.type != Type::timings) ||
+        request.fields.size() != 1 || !label(request.fields[0]))
         throw std::runtime_error("invalid inspection request");
     const auto& id = request.fields[0];
     auto active = registry.jobs.find(id);
     if (active != registry.jobs.end()) {
+        if (request.type == Type::timings) return timing_snapshot(*active->second);
         if (active->second->terminal) return active->second->completion;
         return {Type::error, {id + ": not finished; live streaming is not implemented"}};
     }
     for (const auto& job : registry.history)
-        if (job->id == id) return job->completion;
+        if (job->id == id) return request.type == Type::timings ? timing_snapshot(*job) : job->completion;
     return {Type::error, {id + ": unknown or evicted job (history is in memory only)"}};
 }
 void handle(net::Socket peer, Registry& registry, const std::string& token, const net::TlsContext& tls) {
@@ -297,7 +321,7 @@ void handle(net::Socket peer, Registry& registry, const std::string& token, cons
             net::send(socket, snapshot(registry, true));
             return;
         }
-        if (message.type == Type::jobs || message.type == Type::logs) {
+        if (message.type == Type::jobs || message.type == Type::logs || message.type == Type::timings) {
             net::send(socket, inspect(registry, message));
             return;
         }
@@ -306,12 +330,13 @@ void handle(net::Socket peer, Registry& registry, const std::string& token, cons
             return;
         }
         if (message.type != Type::register_worker ||
-            (message.fields.size() != 6 && message.fields.size() != 7))
+            message.fields.size() < 6 || message.fields.size() > 9)
             throw std::runtime_error("expected registration or cluster request");
         const auto& f = message.fields;
         if (!label(f[0]) || !label(f[1]) || !label(f[2]) ||
             number(f[3]) == 0 || number(f[3]) > 1048576 || number(f[4]) == 0 ||
-            (f[5] != "0" && f[5] != "1") || (f.size() == 7 && f[6] != "staging-v1"))
+            (f[5] != "0" && f[5] != "1") || (f.size() >= 7 && f[6] != "staging-v1") ||
+            (f.size() >= 8 && f[7] != "longpoll-v1") || (f.size() == 9 && f[8] != "timing-v1"))
             throw std::runtime_error("invalid worker capabilities");
         {
             std::lock_guard lock(registry.mutex);
@@ -323,40 +348,61 @@ void handle(net::Socket peer, Registry& registry, const std::string& token, cons
             if (existing == registry.workers.end() && registry.workers.size() >= 64)
                 throw std::runtime_error("worker registry full");
             registry.workers.insert_or_assign(f[0], Record{
-                std::vector<std::string>(f.begin(), f.begin() + 6), Clock::now(), true, nullptr, {0, 0}, f.size() == 7});
+                std::vector<std::string>(f.begin(), f.begin() + 6), Clock::now(), true, nullptr, {0, 0},
+                f.size() >= 7, f.size() >= 8, f.size() == 9});
             registered = f[0];
         }
         net::send(socket, {Type::ok, {}});
         while (!stopped) {
             message = net::receive(socket, std::chrono::seconds(2));
             Message reply{Type::ok, {}};
+            std::shared_ptr<Job> dispatched;
             {
-                std::lock_guard lock(registry.mutex);
+                std::unique_lock lock(registry.mutex);
                 auto& record = registry.workers.at(registered);
                 if (record.job && Clock::now() - record.job->assigned_at >
                     std::chrono::seconds(record.job->timeout + 5))
                     throw std::runtime_error("job result deadline exceeded");
-                if (message.type == Type::result) {
+                if (message.type == Type::result || message.type == Type::profiled_result) {
                     const auto& r = message.fields;
-                    if (!record.job || record.job->state != "RUNNING" || r.size() != 6 ||
+                    const bool profiled = message.type == Type::profiled_result;
+                    if (!record.job || record.job->state != "RUNNING" || record.profiling != profiled ||
+                        r.size() != (profiled ? 10u : 6u) ||
                         r[0] != record.job->id || number(r[1]) > 255 ||
                         r[2].size() > 16384 || r[3].size() > 16384 ||
                         (r[4] != "0" && r[4] != "1") || (r[5] != "0" && r[5] != "1"))
                         throw std::runtime_error("invalid or stale job result");
-                    finish(registry, record, message);
+                    if (profiled) {
+                        std::array<std::uint64_t, 4> phases;
+                        for (std::size_t i = 0; i < phases.size(); ++i) {
+                            phases[i] = number(r[6 + i]);
+                            if (phases[i] > 60000000) throw std::runtime_error("invalid worker timing interval");
+                        }
+                        record.job->worker_phases = phases;
+                    }
+                    finish(registry, record, {Type::result, std::vector<std::string>(r.begin(), r.begin() + 6)});
                 } else if (message.type != Type::heartbeat || !message.fields.empty()) {
                     throw std::runtime_error("expected heartbeat or result");
                 }
                 record.last_seen = Clock::now();
                 schedule(registry);
-                // Results receive OK; assignments are delivered on heartbeats.
+                if (message.type == Type::heartbeat && record.long_poll && !record.job)
+                    registry.changed.wait_for(lock, std::chrono::milliseconds(500), [&] { return stopped || record.job; });
                 if (message.type == Type::heartbeat && record.job && record.job->state == "ASSIGNED") {
                     auto& job = *record.job;
                     reply = assignment(job.id, job.timeout, job.arguments, job.files);
                     job.state = "RUNNING";
+                    dispatched = record.job;
                 }
             }
+            const auto sent_at = Clock::now();
             net::send(socket, reply);
+            const auto sent_until = Clock::now();
+            if (dispatched) {
+                std::lock_guard lock(registry.mutex);
+                dispatched->dispatch_started = sent_at;
+                dispatched->dispatch_finished = sent_until;
+            }
         }
     } catch (const std::exception& error) {
         try { if (ready) net::send(socket, {Type::error, {error.what()}}, std::chrono::milliseconds(100)); }
@@ -375,6 +421,47 @@ void expect_ok(const Message& message) {
         throw std::runtime_error(message.fields.front());
     if (message.type != Type::ok || !message.fields.empty())
         throw std::runtime_error("unexpected coordinator response");
+}
+struct CompletionNotice {
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool ready = false;
+    void signal() {
+        { std::lock_guard lock(mutex); ready = true; }
+        changed.notify_one();
+    }
+};
+struct WorkerOutcome {
+    ExecutionResult result;
+    std::array<std::uint64_t, 3> phases{};
+    Clock::time_point completed_at{};
+};
+std::uint64_t microseconds(Clock::time_point begin, Clock::time_point end) {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
+}
+WorkerOutcome perform(const std::vector<std::string>& arguments, const std::vector<InputFile>& files,
+                      std::uint32_t timeout, const std::atomic<bool>& cancel, Clock::time_point received) {
+    WorkerOutcome outcome;
+    std::optional<Workspace> workspace;
+    Clock::time_point execution_started{};
+    try {
+        if (!files.empty()) workspace.emplace(files);
+        execution_started = Clock::now();
+        outcome.phases[0] = microseconds(received, execution_started);
+        outcome.result = execute(arguments, timeout, cancel, workspace ? workspace->path() : "");
+        outcome.phases[1] = microseconds(execution_started, Clock::now());
+    } catch (const std::exception& error) {
+        const auto failed_at = Clock::now();
+        if (execution_started == Clock::time_point{}) outcome.phases[0] = microseconds(received, failed_at);
+        else outcome.phases[1] = microseconds(execution_started, failed_at);
+        outcome.result.exit_code = 125;
+        outcome.result.error = std::string("worker execution setup failed: ") + error.what();
+    }
+    const auto cleanup_started = Clock::now();
+    workspace.reset();
+    outcome.completed_at = Clock::now();
+    outcome.phases[2] = microseconds(cleanup_started, outcome.completed_at);
+    return outcome;
 }
 }
 
@@ -428,31 +515,48 @@ int join(std::uint16_t port, const std::string& id, const std::string& host) {
     auto socket = connect_coordinator(port, host);
     net::send(socket, {Type::register_worker,
         {id, "linux", system.machine, std::to_string(cpus),
-         std::to_string(static_cast<std::uint64_t>(memory.totalram) * memory.mem_unit), "0", "staging-v1"}});
+         std::to_string(static_cast<std::uint64_t>(memory.totalram) * memory.mem_unit), "0", "staging-v1", "longpoll-v1", "timing-v1"}});
     expect_ok(net::receive(socket));
     std::cout << "Worker " << id << " registered" << std::endl;
     std::atomic<bool> cancel{false};
-    std::future<ExecutionResult> execution;
+    CompletionNotice completed;
+    std::future<WorkerOutcome> execution;
     // Cancel before the future destructor waits during disconnect or shutdown.
     struct CancelOnExit { std::atomic<bool>& flag; ~CancelOnExit() { flag = true; } } cleanup{cancel};
     std::string job_id;
+    auto next_heartbeat = Clock::now();
     while (!stopped) {
-        for (int i = 0; i < 5 && !stopped; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        bool finished = false;
+        if (execution.valid()) {
+            std::unique_lock lock(completed.mutex);
+            completed.changed.wait_until(lock, std::min(next_heartbeat, Clock::now() + std::chrono::milliseconds(100)),
+                                        [&] { return completed.ready || stopped; });
+            finished = completed.ready;
+        }
         if (stopped) break;
-        if (execution.valid() && execution.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-            ExecutionResult result;
-            try { result = execution.get(); }
+        if (finished) {
+            WorkerOutcome outcome;
+            try { outcome = execution.get(); }
             catch (const std::exception& error) {
-                result.exit_code = 125;
-                result.error = std::string("worker execution setup failed: ") + error.what();
+                outcome.result.exit_code = 125;
+                outcome.result.error = std::string("worker execution setup failed: ") + error.what();
+                outcome.completed_at = Clock::now();
             }
-            net::send(socket, {Type::result, {job_id, std::to_string(result.exit_code),
-                result.output, result.error, result.timed_out ? "1" : "0", result.truncated ? "1" : "0"}});
+            const auto& result = outcome.result;
+            Message response{Type::profiled_result, {job_id, std::to_string(result.exit_code),
+                result.output, result.error, result.timed_out ? "1" : "0", result.truncated ? "1" : "0"}};
+            for (const auto phase : outcome.phases) response.fields.push_back(std::to_string(phase));
+            response.fields.push_back(std::to_string(microseconds(outcome.completed_at, Clock::now())));
+            net::send(socket, response);
             expect_ok(net::receive(socket));
             job_id.clear();
+            continue;
         }
+        if (execution.valid() && Clock::now() < next_heartbeat) continue;
         net::send(socket, {Type::heartbeat, {}});
         auto response = net::receive(socket);
+        const auto received_at = Clock::now();
+        next_heartbeat = received_at + std::chrono::milliseconds(500);
         if (response.type == Type::assignment || response.type == Type::staged_assignment) {
             if (execution.valid() || response.fields.size() < 3 ||
                 !label(response.fields[0])) throw std::runtime_error("invalid assignment");
@@ -465,10 +569,11 @@ int join(std::uint16_t port, const std::string& id, const std::string& host) {
             if (offset >= response.fields.size() || response.fields.size() - offset > 128 || response.fields[offset].empty())
                 throw std::runtime_error("invalid assignment arguments");
             std::vector<std::string> arguments(response.fields.begin() + static_cast<std::ptrdiff_t>(offset), response.fields.end());
-            execution = std::async(std::launch::async, [arguments = std::move(arguments), files = std::move(files), timeout, &cancel] {
-                if (files.empty()) return execute(arguments, static_cast<std::uint32_t>(timeout), cancel);
-                Workspace workspace(files);
-                return execute(arguments, static_cast<std::uint32_t>(timeout), cancel, workspace.path());
+            { std::lock_guard lock(completed.mutex); completed.ready = false; }
+            execution = std::async(std::launch::async, [arguments = std::move(arguments), files = std::move(files), timeout,
+                                                     received_at, &cancel, &completed] {
+                struct Notify { CompletionNotice& notice; ~Notify() { notice.signal(); } } notify{completed};
+                return perform(arguments, files, static_cast<std::uint32_t>(timeout), cancel, received_at);
             });
         } else expect_ok(response);
     }
@@ -512,6 +617,24 @@ int logs(std::uint16_t port, const std::string& id, const std::string& host) {
     if (response.fields[4] == "1") std::cerr << "[forge] execution timed out\n";
     if (response.fields[5] == "1") std::cerr << "[forge] output truncated at 16384 bytes per stream\n";
     return 0; // retrieval succeeded, independent of the original command's exit
+}
+int timings(std::uint16_t port, const std::string& id, const std::string& host) {
+    auto socket = connect_coordinator(port, host);
+    net::send(socket, {Type::timings, {id}});
+    const auto response = net::receive(socket);
+    const auto& fields = response.fields;
+    if (response.type == Type::error && fields.size() == 1) throw std::runtime_error(fields[0]);
+    if (response.type != Type::timing_snapshot || fields.size() != 10 || !label(fields[0]) || !label(fields[1]))
+        throw std::runtime_error("invalid timing snapshot");
+    constexpr std::array<const char*, 8> names{"queue_seconds", "dispatch_wait_seconds", "dispatch_write_seconds",
+        "assigned_to_terminal_seconds", "worker_prepare_seconds", "worker_execute_seconds", "worker_cleanup_seconds",
+        "worker_result_wait_seconds"};
+    std::string json = "{\"job_id\":\"" + fields[0] + "\",\"state\":\"" + fields[1] + "\"";
+    for (std::size_t i = 0; i < names.size(); ++i)
+        json += ",\"" + std::string(names[i]) + "\":" + (fields[i + 2].empty() ? "null" :
+            std::to_string(static_cast<double>(number(fields[i + 2])) / 1000000.0));
+    std::cout << json << "}\n";
+    return 0;
 }
 
 void validate_task(const TaskRequest& task) {

@@ -37,6 +37,14 @@ execution. It retains all raw trials and provenance caveats; it is not a resume
 speedup or physical-cluster result. All ten Debug and Release suites, plus the
 Release container network test, passed before that experiment.
 
+Idle workers now use bounded pending heartbeat requests for immediate dispatch,
+and execution completion wakes the worker connection thread. Authenticated
+forge timings inspection exposes defined per-host phase durations. Legacy worker
+results remain supported. All eleven Debug suites (82.81 seconds), eleven Release
+suites (82.11 seconds), and the four-container TLS test passed locally. The harness
+now supports shuffled complete-runtime old/new comparisons and optional post-batch
+phase collection. Performance impact requires an actual comparison experiment.
+
 | Milestone | Completion evidence still required |
 |---|---|
 | A: actual cross-machine execution | TLS execution on separate physical Linux machines; record command origin, failures, and results |

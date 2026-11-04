@@ -20,6 +20,7 @@ int main(int argc, char** argv) {
                      "  forge cluster [--port 9000]\n"
                      "  forge ps [--port 9000]\n"
                      "  forge logs JOB [--port 9000]\n\n"
+                     "  forge timings JOB [--port 9000]\n\n"
                      "  forge run [--port 9000] [--cpu 1] [--memory 0] [--timeout 30] [--arch native|any|ARCH] -- COMMAND [ARGS...]\n\n"
                      "  forge run [OPTIONS] [--file PATH]... -- COMMAND [ARGS...]\n"
                      "  forge map [OPTIONS] [--file SHARED]... [--jobs 16] [--output DIR] INPUT... -- COMMAND {}\n\n"
@@ -47,8 +48,8 @@ int main(int argc, char** argv) {
     bool concurrency_seen = false, output_seen = false;
     bool port_seen = false;
     int first_option = 2;
-    if (command == "logs") {
-        if (argc < 3) throw std::runtime_error("usage: forge logs JOB [--port PORT]");
+    if (command == "logs" || command == "timings") {
+        if (argc < 3) throw std::runtime_error("inspection requires a job ID");
         log_id = argv[2];
         first_option = 3;
     }
@@ -74,7 +75,7 @@ int main(int argc, char** argv) {
         } else if (!endpoint_seen && !value.empty() &&
                    ((option == "--bind" && command == "coordinator") ||
                     (option == "--host" && (command == "join" || command == "cluster" ||
-                        command == "ps" || command == "logs" || command == "run" || command == "map")))) {
+                        command == "ps" || command == "logs" || command == "timings" || command == "run" || command == "map")))) {
             endpoint = value;
             endpoint_seen = true;
         } else if (option == "--arch" && (command == "run" || command == "map") && !architecture_seen) {
@@ -113,6 +114,7 @@ int main(int argc, char** argv) {
     if (command == "cluster") return forge::cluster(port, endpoint);
     if (command == "ps") return forge::ps(port, endpoint);
     if (command == "logs") return forge::logs(port, log_id, endpoint);
+    if (command == "timings") return forge::timings(port, log_id, endpoint);
     if (command == "join" && !id.empty()) return forge::join(port, id, endpoint);
     if ((command == "run" || command == "map") && !arguments.empty()) {
         forge::TaskRequest task{cpu, memory, timeout, architecture, arguments, forge::read_inputs(files)};
