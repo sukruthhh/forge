@@ -175,3 +175,11 @@ bridge test exercises external TLS mode across separate containers. Tiny inputs
 and --purpose smoke are intentional; CI asserts no speedup threshold. Physical
 execution, real-application workloads, recovery metrics, utilization telemetry,
 and recruiter-ready performance claims still require separate experiments.
+
+## Published observations
+
+The [initial local overhead observation](results/2026-11-03-local-001/README.md)
+preserves every trial of a small Release experiment on one Docker host. Forge was
+slower than both local baselines for that short workload. Its original dirty flag
+and the cross-platform CRLF/Git explanation remain intact. It is a starting point
+for profiling, not a physical-machine or representative-application claim.

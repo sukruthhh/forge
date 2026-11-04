@@ -31,6 +31,11 @@ and matching local-parallel baselines, managed or existing TLS clusters, raw dat
 and explicit failure invalidation. This establishes measurement tooling, not a
 physical-cluster speedup or real-application performance result. See
 [benchmark methodology](../benchmarks/README.md).
+The first [reviewed local observation](../benchmarks/results/2026-11-03-local-001/README.md)
+found short synthetic tasks slower through Forge than direct sequential or parallel
+execution. It retains all raw trials and provenance caveats; it is not a resume
+speedup or physical-cluster result. All ten Debug and Release suites, plus the
+Release container network test, passed before that experiment.
 
 | Milestone | Completion evidence still required |
 |---|---|

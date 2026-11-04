@@ -645,3 +645,23 @@ were disabled. Release subsequently passed all ten suites (114.51 seconds) and
 the expanded four-container TLS test; Debug protocol checks also passed. CI now
 builds/tests both Debug and Release, with the container-network check on Release.
 This is build compatibility evidence, not evidence of an observed memory overflow.
+
+Initial measured observation: source checkout f6fd4d2, Release, a single Docker
+container with a two-CPU quota and 2 GiB RAM, and other development services running
+on the PC. Four synthetic CPU inputs, one warmup per profile and three measured
+repetitions yielded median batch times of 1.000 s direct sequential, 0.496 s direct
+parallel (two processes), 4.044 s Forge with one worker, and 2.042 s Forge with two
+workers. All 64 task executions including warmups passed the independent oracle.
+Two-worker Forge took about 4.12 times as long as direct parallel execution here.
+This is an unfavorable short-task overhead result, not a resume speedup claim.
+
+The [reviewed raw report](../benchmarks/results/2026-11-03-local-001/README.md)
+retains every trial, hashes, limits, summary, and the original git_dirty=true flag.
+Windows Git was clean; Linux Git's CRLF view differed because it lacked the host's
+global autocrlf setting. Ignoring CR-at-line-end and checking with that setting
+showed no content differences. The flag was not rewritten. The summary and artifact
+hashes were independently checked after export. The report discloses bind-mounted
+source, native container result storage, shared-host load, and limited sample size.
+Profile the 500-ms worker polling path and other phases before assigning the whole
+difference to a component or claiming an improvement. Physical/real-workload and
+recovery/utilization evidence remains pending.
