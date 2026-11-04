@@ -1,5 +1,5 @@
 FROM ubuntu:24.04
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake ninja-build gdb ca-certificates python3 libssl-dev openssl \
+    build-essential cmake ninja-build gdb ca-certificates python3 libssl-dev openssl git \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace

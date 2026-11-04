@@ -26,6 +26,12 @@ as an objective percentage of completion.
 
 ## Full product milestones
 
+A benchmark harness now supplies correctness-checked synthetic CPU runs, sequential
+and matching local-parallel baselines, managed or existing TLS clusters, raw data,
+and explicit failure invalidation. This establishes measurement tooling, not a
+physical-cluster speedup or real-application performance result. See
+[benchmark methodology](../benchmarks/README.md).
+
 | Milestone | Completion evidence still required |
 |---|---|
 | A: actual cross-machine execution | TLS execution on separate physical Linux machines; record command origin, failures, and results |

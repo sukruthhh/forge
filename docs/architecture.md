@@ -145,3 +145,20 @@ after a command failure. Stop new submissions if local result storage fails.
 This provides an end-to-end batch workflow without claiming durable batch state,
 general dependency packaging, output artifact transfer, or at-least-once recovery.
 See [batch workloads](batch-workloads.md) for limits, protocol, and remaining work.
+
+## 010: Measure complete validated batches before claiming performance
+
+Add client monotonic submission-to-result timing to map metadata without calling
+it dispatch latency. Keep result persistence outside that per-task interval, but
+inside the complete batch timing used by the benchmark driver. Compare sequential
+and matching local-parallel subprocess execution with Forge profiles on identical
+inputs. Compute an independent correctness oracle before timing, then validate
+results after the measured batch ends for both baseline and Forge modes.
+
+Retain all planned warmups and repetitions, rotate trial order using a recorded
+seed, and invalidate performance summaries when any task/trial or baseline fails.
+Preserve negative time reductions instead of selecting favorable trials. Export
+raw task streams, provenance, identities, and timing definitions. Start with a
+deterministic synthetic CPU workload to expose runtime overhead; real-application
+and physical-machine claims require separate experiments. See
+[benchmark methodology](../benchmarks/README.md).

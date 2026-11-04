@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <fcntl.h>
 #include <iomanip>
 #include <iostream>
@@ -50,6 +51,7 @@ struct Entry {
     TaskResult result;
     bool submitted = false;
     bool stored = false;
+    double elapsed_seconds = 0;
 };
 std::string state(const Entry& entry) {
     if (!entry.submitted) return "NOT_SUBMITTED";
@@ -65,6 +67,7 @@ std::string record(std::size_t index, const Entry& entry) {
         ",\"timed_out\":" + (result.timed_out ? "true" : "false") +
         ",\"truncated\":" + (result.truncated ? "true" : "false") +
         ",\"storage_complete\":" + (entry.stored ? "true" : "false") +
+        ",\"elapsed_seconds\":" + (entry.submitted ? std::to_string(entry.elapsed_seconds) : "null") +
         ",\"stdout\":" + (entry.submitted ? quote(prefix(index) + ".stdout") : "null") +
         ",\"stderr\":" + (entry.submitted ? quote(prefix(index) + ".stderr") : "null") +
         ",\"diagnostic\":" + quote(result.infrastructure_error ? result.error : "") + "}";
@@ -107,11 +110,13 @@ int map(std::uint16_t port, const std::string& host, const TaskRequest& base,
                     if (index >= entries.size()) break;
                     auto& entry = entries[index];
                     entry.submitted = true;
+                    const auto started = std::chrono::steady_clock::now();
                     try { entry.result = submit_task(port, host, entry.task); }
                     catch (const std::exception& error) {
                         entry.result.infrastructure_error = true;
                         entry.result.error = std::string("submission outcome may be unknown; not retried: ") + error.what();
                     }
+                    entry.elapsed_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
                     entry.task.files.clear();
                     try {
                         save(directory.get(), prefix(index) + ".stdout", entry.result.output);

@@ -7,7 +7,7 @@ trap 'exit 0' INT TERM
 while :; do
     current=$(
         { sha256sum CMakeLists.txt
-          find src include tests scripts -type f ! -path '*/__pycache__/*' -print0 |
+          find src include tests scripts benchmarks -type f ! -path '*/__pycache__/*' ! -path 'benchmarks/results/*' -print0 |
               sort -z | xargs -0 sha256sum
         } | sha256sum
     )

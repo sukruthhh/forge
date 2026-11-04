@@ -108,13 +108,20 @@ def main():
             paths = [row["cwd"] for row in batch if row["host"] == hostname]
             docker("exec", name, "python3", "-c",
                    "import pathlib,sys; assert not any(pathlib.Path(p).exists() for p in sys.argv[1:])", *paths)
+        execute(client, "client", "python3", "/src/benchmarks/run.py", "--binary", binary,
+                "--output", "/tmp/benchmark-results", "--environment-kind", "container", "--label", "CI private-bridge smoke",
+                "--purpose", "smoke", "--host", host, "--cluster-kind", "same-host-containers", "--workers", "2",
+                "--tasks", "2", "--limit", "1000", "--step", "100", "--repetitions", "1", "--warmups", "0")
+        benchmark = json.loads(docker("exec", client, "cat", "/tmp/benchmark-results/summary.json").stdout)
+        if not benchmark["valid"] or not benchmark["profiles"]["forge-2"]["valid"]:
+            raise RuntimeError("external TLS benchmark smoke did not validate its results")
         plaintext = docker("exec", client, binary, "cluster", "--host", host, check=False)
         if plaintext.returncode == 0 or "require mutual TLS" not in plaintext.stderr:
             raise RuntimeError("remote plaintext policy bypassed")
         docker("stop", "--time", "2", worker_a)
         wait_for(lambda: "DEAD" in cluster().stdout, "worker-container loss not detected")
         execute(client, "client", binary, "run", "--host", host, "--", "/bin/true")
-        print("PASS: mutual TLS across four containers; placement, staged map from CLI-only files, ordered results, workspace cleanup, ps/logs, loss, remaining capacity.")
+        print("PASS: mutual TLS across four containers; staged map, ordered results, cleanup, external benchmark smoke, ps/logs, loss, remaining capacity.")
         print("This verifies separate network namespaces on one Docker host, not separate physical machines or performance.")
     finally:
         for name in reversed(created):

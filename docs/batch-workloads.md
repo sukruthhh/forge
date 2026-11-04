@@ -77,10 +77,18 @@ must exist. Existing directories and files are not overwritten. The client write
 | results.jsonl | All metadata in input order, written after the batch finishes |
 
 Metadata includes index, staged input basename, job ID when known, state, exit
-code, timeout/truncation flags, storage completion, stream filenames, and an
+code, timeout/truncation flags, storage completion, elapsed_seconds, stream filenames, and an
 infrastructure diagnostic. Command streams are files, not JSON strings. Metadata
 diagnostics escape control and non-ASCII bytes; the stderr file preserves bytes.
 Inputs with identical basenames remain distinguishable by index and job ID.
+
+elapsed_seconds uses the client's monotonic clock from task submission through
+result receipt, including connection/authentication, placement wait, staging,
+execution, and result delivery. It excludes result-file persistence and time in
+the client's not-yet-submitted backlog. NOT_SUBMITTED has null elapsed time. It
+is not a worker execution timer or scheduler dispatch-latency measurement.
+The [benchmark harness](../benchmarks/README.md) requires this timing field and
+rejects missing/invalid timing data rather than estimating it from output order.
 
 The CLI reports per-task completion on stderr and a final table on stdout. It
 returns 0 only if all tasks succeed and results are stored; otherwise 1. A command

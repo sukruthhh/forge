@@ -113,6 +113,15 @@ placement on two workers, staged map from CLI-only source files, output inspecti
 workspace cleanup, and worker loss, then cleans up.
 It is a network integration test on one host, not a physical-cluster benchmark.
 
+## Measure batch execution
+
+The [benchmark harness](benchmarks/README.md) compares sequential execution,
+matching local-parallel subprocesses, and Forge worker counts using a deterministic
+synthetic CPU workload with an independent correctness oracle. It retains raw
+samples and failures, records provenance, and suppresses speedups for invalid runs.
+Use a Release build and follow the guide's environment and timing definitions.
+CI smoke timings are not performance claims or physical-machine evidence.
+
 ## Inspect jobs after execution
 
 Use ./build/forge ps and ./build/forge logs job-1 against the same coordinator.

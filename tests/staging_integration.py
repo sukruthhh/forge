@@ -156,6 +156,7 @@ try:
         for index, row in enumerate(rows):
             require(row["state"] == "SUCCEEDED" and row["exit_code"] == 0 and contents[index]["data"] == inputs[index].read_bytes().hex(),
                     "batch input association or status wrong")
+            require(row["elapsed_seconds"] >= .8, "task timing excluded the known execution interval")
             require(json.loads((output / f"{index + 1:04}.json").read_text()) == row, "incremental metadata disagrees with manifest")
             require(command("logs", row["job_id"], port=port).stdout == (output / row["stdout"]).read_bytes(), "retained staged logs differ")
         require(output.stat().st_mode & 0o777 == 0o700 and (output / "0001.stdout").stat().st_mode & 0o777 == 0o600,

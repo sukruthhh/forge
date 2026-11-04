@@ -55,4 +55,7 @@ if(BUILD_TESTING)
   add_test(NAME staging_integration COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/staging_integration.py $<TARGET_FILE:forge>)
   set_tests_properties(staging_integration PROPERTIES TIMEOUT 150)
+  add_test(NAME benchmark_integration COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark_integration.py $<TARGET_FILE:forge>)
+  set_tests_properties(benchmark_integration PROPERTIES TIMEOUT 120)
 endif()

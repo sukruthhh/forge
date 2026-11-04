@@ -62,6 +62,7 @@ motivation in your own words rather than presenting this document as a script.
 | Worker process execution | Implemented: explicit argv, output/exit capture, runtime/output bounds, one job per worker |
 | Job inspection and retained logs | Implemented: active jobs plus 64 finalized results in memory, explicit terminal states |
 | File staging and batch map | Up to 16 flat files / 32 KiB per task; client-driven map, up to 256 inputs and 16 in-flight jobs; local-process and TLS container tests |
+| Benchmark tooling | Synthetic CPU oracle, sequential/local-parallel/Forge profiles, repeated raw samples, provenance, failure invalidation; not physical-cluster performance evidence |
 | General dependency packaging, output files, durable history | Planned |
 | Heartbeats | Implemented with READY/SUSPECT/DEAD inspection and session deadlines |
 | Authentication and encryption | Mutual TLS 1.3 for IPv4 endpoints; optional FORGE_TOKEN gate; no per-worker identity binding or roles |
@@ -595,3 +596,43 @@ General dependency/directory packaging, larger streaming uploads, arbitrary outp
 artifact retrieval, durable batch metadata, cancellation/retries, namespaces/cgroups,
 and physical-machine benchmarks are still open. The bundled JSON-summary example
 is a workflow demonstration with synthetic inputs, not a performance experiment.
+
+## Benchmark infrastructure (November 3)
+
+Map metadata now includes monotonic elapsed_seconds from client submission through
+result receipt, excluding result persistence and the unsubmitted client backlog.
+It includes network/authentication, placement wait, staging, execution, and result
+delivery. It is not scheduler dispatch latency. A regression checks that the known
+0.8-second task execution interval is included.
+
+The benchmark harness compares direct sequential execution, matching local-parallel
+subprocesses, and Forge worker counts using identical deterministic prime-counting
+inputs. Trial division supplies CPU work; an independent sieve supplies the oracle
+outside timing. Correct results must include task identity, the exact integer answer,
+workload hash, valid telemetry, successful storage, and worker participation.
+
+Full batch timing includes process startup, input handling/staging, execution, and
+result writes, while excluding cluster setup and post-run correctness verification
+for both baseline and Forge modes. Seeded order randomization, recorded warmups,
+raw sample retention, and strict invalidation prevent failed/missing trials from
+improving speedup claims. The report includes task p50/p95 using nearest rank,
+batch median/spread, completed-task throughput, and comparisons against both
+sequential and matching local-parallel baselines. Negative reductions remain visible.
+
+Provenance records checkout commit/dirty state, binary/workload digests, compiler
+and build type, control-host resources and visible cgroup limits, configuration,
+worker identities/architectures/Python versions, and timing boundaries. A checkout
+SHA is not attestation that an arbitrary supplied binary was built from it.
+Topology declarations do not prove physical-machine separation. Credentials are
+not exported. Follow [the methodology](../benchmarks/README.md) before using results.
+
+Validation: all ten Debug CTest suites passed (114.90 seconds). Benchmark checks
+cover known prime counts, raw observation preservation, throughput/sample accounting,
+warmup exclusion, corrupted-answer rejection, failed/missing trial invalidation,
+existing-result protection, and actual worker launch failure. The expanded
+four-container TLS test also passed external-cluster benchmark smoke mode. CI
+checks correctness only; tiny smoke timings are not performance evidence.
+
+A Release experiment and its reviewed raw report can supply an initial one-host
+overhead observation. Physical-machine scaling, representative workloads, recovery
+measurements, utilization telemetry, and resume impact claims remain unverified.
