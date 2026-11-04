@@ -3,7 +3,9 @@
 Turn every computer you own into one private compute cluster.
 
 Forge is a local-first, self-hosted distributed batch-compute runtime targeting
-heterogeneous machines. Stack: **C++20 | Linux | TCP/IP | CMake**.
+heterogeneous machines. 
+
+Stack: **C++20 | Linux | TCP/IP | CMake**.
 
 ## Current status
 
