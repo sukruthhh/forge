@@ -147,9 +147,10 @@ std::vector<std::uint8_t> encode(const Message& message) {
         append32(payload, static_cast<std::uint32_t>(field.size()));
         payload.insert(payload.end(), field.begin(), field.end());
     }
-    std::vector<std::uint8_t> frame;
-    append32(frame, static_cast<std::uint32_t>(payload.size()));
-    frame.insert(frame.end(), payload.begin(), payload.end());
+    std::vector<std::uint8_t> frame(payload.size() + 4);
+    const auto length = static_cast<std::uint32_t>(payload.size());
+    for (int i = 0; i < 4; ++i) frame[i] = (length >> (24 - i * 8)) & 255;
+    std::copy(payload.begin(), payload.end(), frame.begin() + 4);
     return frame;
 }
 

@@ -636,3 +636,12 @@ checks correctness only; tiny smoke timings are not performance evidence.
 A Release experiment and its reviewed raw report can supply an initial one-host
 overhead observation. Physical-machine scaling, representative workloads, recovery
 measurements, utilization telemetry, and resume impact claims remain unverified.
+
+Preparing the first optimized measurement exposed an existing Release-build
+failure: GCC 13.3's optimized vector insertion diagnostic was promoted to an error
+in frame encoding. Frame construction now allocates the final size once, fills
+the length header, and copies the payload into that allocation. No warning flags
+were disabled. Release subsequently passed all ten suites (114.51 seconds) and
+the expanded four-container TLS test; Debug protocol checks also passed. CI now
+builds/tests both Debug and Release, with the container-network check on Release.
+This is build compatibility evidence, not evidence of an observed memory overflow.

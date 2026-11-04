@@ -87,7 +87,9 @@ authentication, staging, placement wait, execution, and heartbeat/result deliver
 it excludes result persistence. Both exclude time waiting in the client's
 not-yet-submitted backlog. They are not pure execution or dispatch latency.
 The workload separately reports compute-only wall time and its process CPU time.
-Process CPU time is not cluster CPU utilization.
+The CPU interval brackets the compute kernel, not the full interpreter lifetime;
+process_cpu_seconds_total sums those intervals across measured tasks. It is not
+cluster CPU utilization.
 
 Summary definitions:
 
