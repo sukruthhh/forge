@@ -181,7 +181,7 @@ def cluster_snapshot(args, host, port, environment, workers):
         raise RuntimeError("READY worker count differs from requested benchmark topology")
     jobs = subprocess.run(forge_command(args, host, port, "ps"), env=environment,
                           capture_output=True, text=True, timeout=8)
-    if jobs.returncode or any("\t" + state + "\t" in jobs.stdout for state in ("QUEUED", "ASSIGNED", "RUNNING")):
+    if jobs.returncode or any("\t" + state + "\t" in jobs.stdout for state in ("QUEUED", "ASSIGNED", "RUNNING", "CANCELLING")):
         raise RuntimeError("cluster has active jobs or cannot be inspected; benchmark requires idle Forge capacity")
     return records
 

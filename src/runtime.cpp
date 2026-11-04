@@ -53,6 +53,9 @@ bool label(const std::string& value) {
                    (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.';
         });
 }
+bool cancellation_cleanup(const std::string& value) {
+    return value == "reported" || value == "not-started" || value == "unconfirmed";
+}
 std::string configured_token() {
     const char* value = std::getenv("FORGE_TOKEN");
     if (!value) return {};
@@ -144,6 +147,9 @@ struct Job {
     std::vector<Attempt> attempts;
     Message completion{Type::error, {"job unfinished"}};
     bool terminal = false;
+    bool cancel_requested = false;
+    Clock::time_point cancel_at{};
+    std::string cancel_cleanup;
 };
 struct Record {
     std::vector<std::string> capabilities;
@@ -155,6 +161,7 @@ struct Record {
     bool long_poll = false;
     bool profiling = false;
     bool attempts = false;
+    bool cancellable = false;
 };
 struct Registry {
     std::mutex mutex;
@@ -172,9 +179,24 @@ void close_attempt(Job& job, const std::string& state, const std::string& diagno
     attempt.diagnostic = diagnostic;
     if (job.completion.type == Type::result) attempt.exit_code = job.completion.fields[1];
 }
+void complete_cancellation(Job& job, const std::string& cleanup, const Message* result = nullptr) {
+    job.cancel_requested = true;
+    job.cancel_cleanup = std::any_of(job.attempts.begin(), job.attempts.end(),
+        [](const Attempt& attempt) { return attempt.state == "LOST"; }) ? "unconfirmed" : cleanup;
+    job.terminal = true;
+    job.state = "CANCELLED";
+    job.completed_at = Clock::now();
+    job.completion = {Type::cancelled_result, {job.id, "130", result ? result->fields[2] : "",
+        result ? result->fields[3] : "", "0", result ? result->fields[5] : "0", job.cancel_cleanup}};
+    close_attempt(job, "CANCELLED", "cancellation cleanup: " + cleanup);
+    if (result && !job.attempts.empty()) job.attempts.back().exit_code = result->fields[1];
+}
 void finish(Registry& registry, Record& record, Message result) {
     if (!record.job) return;
-    if (!record.job->terminal) {
+    if (!record.job->terminal && record.job->cancel_requested) {
+        complete_cancellation(*record.job, result.type == Type::result ? "reported" : "unconfirmed",
+                              result.type == Type::result ? &result : nullptr);
+    } else if (!record.job->terminal) {
         record.job->completion = std::move(result);
         record.job->terminal = true;
         record.job->completed_at = Clock::now();
@@ -193,7 +215,7 @@ void worker_lost(Registry& registry, Record& record) {
     record.connected = false;
     if (!record.job) return;
     auto& job = *record.job;
-    if (!stopped && !job.terminal && job.attempts.size() <= job.retries) {
+    if (!stopped && !job.terminal && !job.cancel_requested && job.attempts.size() <= job.retries) {
         close_attempt(job, "LOST", "worker session ended before an accepted result; execution outcome unknown");
         job.state = "QUEUED";
         job.worker.clear();
@@ -212,7 +234,7 @@ void schedule(Registry& registry) {
     // Caller holds the registry lock through selection AND reservation.
     for (auto& [id, job] : registry.jobs) {
         if (stopped) return;
-        if (job->state != "QUEUED" || job->terminal) continue;
+        if (job->state != "QUEUED" || job->terminal || job->cancel_requested) continue;
         std::vector<Worker> candidates;
         for (const auto& [worker_id, record] : registry.workers) {
             const auto& c = record.capabilities;
@@ -280,11 +302,14 @@ void submit(net::Connection& connection, Registry& registry, const Message& mess
             }
         }
         if (!job->terminal) {
-            job->state = "CANCELLED";
-            job->completion = {Type::error, {job->id + ": coordinator stopping"}};
-            job->terminal = true;
-            job->completed_at = Clock::now();
-            close_attempt(*job, "CANCELLED", "coordinator stopping");
+            if (job->cancel_requested) complete_cancellation(*job, "unconfirmed");
+            else {
+                job->state = "CANCELLED";
+                job->completion = {Type::error, {job->id + ": coordinator stopping"}};
+                job->terminal = true;
+                job->completed_at = Clock::now();
+                close_attempt(*job, "CANCELLED", "coordinator stopping");
+            }
         }
         registry.jobs.erase(job->id);
         job->files.clear();
@@ -352,7 +377,8 @@ Message inspect(Registry& registry, const Message& request) {
         auto append = [&reply](const std::shared_ptr<Job>& job) {
             reply.fields.insert(reply.fields.end(), {job->id, job->state,
                 job->worker.empty() ? "-" : job->worker,
-                job->terminal && job->completion.type == Type::result ? job->completion.fields[1] : "-",
+                job->terminal && (job->completion.type == Type::result || job->completion.type == Type::cancelled_result)
+                    ? job->completion.fields[1] : "-",
                 summary(job->arguments)});
         };
         for (const auto& [id, job] : registry.jobs) append(job);
@@ -368,6 +394,42 @@ Message inspect(Registry& registry, const Message& request) {
     for (const auto& job : registry.history)
         if (job->id == id) return inspect_job(*job, request.type);
     return {Type::error, {id + ": unknown or evicted job (history is in memory only)"}};
+}
+Message request_cancellation(Registry& registry, const Message& request) {
+    if (request.fields.size() != 1 || !label(request.fields[0]))
+        throw std::runtime_error("cancel requires one job ID");
+    std::lock_guard lock(registry.mutex);
+    const auto& id = request.fields[0];
+    std::shared_ptr<Job> job;
+    const auto active = registry.jobs.find(id);
+    if (active != registry.jobs.end()) job = active->second;
+    else for (const auto& retained : registry.history)
+        if (retained->id == id) { job = retained; break; }
+    if (!job) return {Type::error, {id + ": unknown or evicted job (history is in memory only)"}};
+    if (!job->terminal && !job->cancel_requested) {
+        if (job->state == "QUEUED") complete_cancellation(*job, "not-started");
+        else {
+            auto& record = registry.workers.at(job->worker);
+            if (record.job != job) throw std::runtime_error("job reservation mismatch");
+            if (job->state == "ASSIGNED") {
+                complete_cancellation(*job, "not-started");
+                record.job.reset();
+                record.reserved = {0, 0};
+            } else {
+                if (!record.cancellable)
+                    return {Type::error, {id + ": running worker does not support cancel-v1; upgrade the worker"}};
+                job->cancel_requested = true;
+                job->cancel_at = Clock::now();
+                job->cancel_cleanup = "pending";
+                job->state = "CANCELLING";
+                job->attempts.back().state = "CANCELLING";
+            }
+        }
+        registry.changed.notify_all();
+        schedule(registry);
+    }
+    return {Type::cancellation_status, {job->id, job->state,
+        job->cancel_cleanup.empty() ? "not-requested" : job->cancel_cleanup}};
 }
 void handle(net::Socket peer, Registry& registry, const std::string& token, const net::TlsContext& tls) {
     std::string registered;
@@ -396,20 +458,24 @@ void handle(net::Socket peer, Registry& registry, const std::string& token, cons
             net::send(socket, inspect(registry, message));
             return;
         }
+        if (message.type == Type::cancel) {
+            net::send(socket, request_cancellation(registry, message));
+            return;
+        }
         if (message.type == Type::submit || message.type == Type::staged_submit ||
             message.type == Type::retry_submit || message.type == Type::retry_staged_submit) {
             submit(socket, registry, message);
             return;
         }
         if (message.type != Type::register_worker ||
-            message.fields.size() < 6 || message.fields.size() > 10)
+            message.fields.size() < 6 || message.fields.size() > 11)
             throw std::runtime_error("expected registration or cluster request");
         const auto& f = message.fields;
         if (!label(f[0]) || !label(f[1]) || !label(f[2]) ||
             number(f[3]) == 0 || number(f[3]) > 1048576 || number(f[4]) == 0 ||
             (f[5] != "0" && f[5] != "1") || (f.size() >= 7 && f[6] != "staging-v1") ||
             (f.size() >= 8 && f[7] != "longpoll-v1") || (f.size() >= 9 && f[8] != "timing-v1") ||
-            (f.size() == 10 && f[9] != "attempt-v1"))
+            (f.size() >= 10 && f[9] != "attempt-v1") || (f.size() == 11 && f[10] != "cancel-v1"))
             throw std::runtime_error("invalid worker capabilities");
         {
             std::lock_guard lock(registry.mutex);
@@ -422,7 +488,7 @@ void handle(net::Socket peer, Registry& registry, const std::string& token, cons
                 throw std::runtime_error("worker registry full");
             registry.workers.insert_or_assign(f[0], Record{
                 std::vector<std::string>(f.begin(), f.begin() + 6), Clock::now(), true, nullptr, {0, 0},
-                f.size() >= 7, f.size() >= 8, f.size() >= 9, f.size() == 10});
+                f.size() >= 7, f.size() >= 8, f.size() >= 9, f.size() >= 10, f.size() == 11});
             registered = f[0];
         }
         net::send(socket, {Type::ok, {}});
@@ -433,6 +499,9 @@ void handle(net::Socket peer, Registry& registry, const std::string& token, cons
             {
                 std::unique_lock lock(registry.mutex);
                 auto& record = registry.workers.at(registered);
+                if (record.job && record.job->cancel_requested &&
+                    Clock::now() - record.job->cancel_at > std::chrono::seconds(5))
+                    throw std::runtime_error("cancellation acknowledgement deadline exceeded");
                 if (record.job && Clock::now() - record.job->assigned_at >
                     std::chrono::seconds(record.job->timeout + 5))
                     throw std::runtime_error("job result deadline exceeded");
@@ -448,7 +517,8 @@ void handle(net::Socket peer, Registry& registry, const std::string& token, cons
                     }
                     const auto& r = message.fields;
                     const bool profiled = message.type == Type::profiled_result;
-                    if (!record.job || record.job->state != "RUNNING" || record.profiling != profiled ||
+                    if (!record.job || (record.job->state != "RUNNING" && record.job->state != "CANCELLING") ||
+                        record.profiling != profiled ||
                         r.size() != (profiled ? 10u : 6u) ||
                         r[0] != record.job->id || number(r[1]) > 255 ||
                         r[2].size() > 16384 || r[3].size() > 16384 ||
@@ -477,6 +547,8 @@ void handle(net::Socket peer, Registry& registry, const std::string& token, cons
                     job.state = "RUNNING";
                     job.attempts.back().state = "RUNNING";
                     dispatched = record.job;
+                } else if (!stopped && message.type == Type::heartbeat && record.job && record.job->cancel_requested) {
+                    reply = {Type::stop_attempt, {record.job->id, std::to_string(record.job->attempts.back().number)}};
                 }
             }
             const auto sent_at = Clock::now();
@@ -599,7 +671,7 @@ int join(std::uint16_t port, const std::string& id, const std::string& host) {
     net::send(socket, {Type::register_worker,
         {id, "linux", system.machine, std::to_string(cpus),
          std::to_string(static_cast<std::uint64_t>(memory.totalram) * memory.mem_unit), "0",
-         "staging-v1", "longpoll-v1", "timing-v1", "attempt-v1"}});
+         "staging-v1", "longpoll-v1", "timing-v1", "attempt-v1", "cancel-v1"}});
     expect_ok(net::receive(socket));
     std::cout << "Worker " << id << " registered" << std::endl;
     std::atomic<bool> cancel{false};
@@ -644,7 +716,12 @@ int join(std::uint16_t port, const std::string& id, const std::string& host) {
         auto response = net::receive(socket);
         const auto received_at = Clock::now();
         next_heartbeat = received_at + std::chrono::milliseconds(500);
-        if (response.type == Type::attempt_assignment || response.type == Type::attempt_staged_assignment) {
+        if (response.type == Type::stop_attempt) {
+            if (!execution.valid() || response.fields.size() != 2 || response.fields[0] != job_id ||
+                number(response.fields[1]) != attempt)
+                throw std::runtime_error("invalid cancellation attempt");
+            cancel = true;
+        } else if (response.type == Type::attempt_assignment || response.type == Type::attempt_staged_assignment) {
             if (response.fields.size() < 4 || number(response.fields[1]) == 0 || number(response.fields[1]) > 4)
                 throw std::runtime_error("invalid execution attempt");
             attempt = static_cast<std::uint32_t>(number(response.fields[1]));
@@ -661,6 +738,7 @@ int join(std::uint16_t port, const std::string& id, const std::string& host) {
             if (offset >= response.fields.size() || response.fields.size() - offset > 128 || response.fields[offset].empty())
                 throw std::runtime_error("invalid assignment arguments");
             std::vector<std::string> arguments(response.fields.begin() + static_cast<std::ptrdiff_t>(offset), response.fields.end());
+            cancel = false;
             { std::lock_guard lock(completed.mutex); completed.ready = false; }
             execution = std::async(std::launch::async, [arguments = std::move(arguments), files = std::move(files), timeout,
                                                      received_at, &cancel, &completed] {
@@ -701,11 +779,14 @@ int logs(std::uint16_t port, const std::string& id, const std::string& host) {
     auto response = net::receive(socket);
     if (response.type == Type::error && response.fields.size() == 1)
         throw std::runtime_error(response.fields[0]);
-    if (response.type != Type::result || response.fields.size() != 6)
+    const bool cancelled = response.type == Type::cancelled_result;
+    if ((response.type != Type::result && !cancelled) || response.fields.size() != (cancelled ? 7u : 6u) ||
+        (cancelled && !cancellation_cleanup(response.fields[6])))
         throw std::runtime_error("invalid retained result");
     std::cout << response.fields[2];
     std::cerr << response.fields[3];
     std::cerr << "[forge] " << response.fields[0] << " exit=" << response.fields[1] << '\n';
+    if (cancelled) std::cerr << "[forge] CANCELLED cleanup=" << response.fields[6] << '\n';
     if (response.fields[4] == "1") std::cerr << "[forge] execution timed out\n";
     if (response.fields[5] == "1") std::cerr << "[forge] output truncated at 16384 bytes per stream\n";
     return 0; // retrieval succeeded, independent of the original command's exit
@@ -751,6 +832,19 @@ int attempts(std::uint16_t port, const std::string& id, const std::string& host)
     }
     return 0;
 }
+int cancel(std::uint16_t port, const std::string& id, const std::string& host) {
+    auto socket = connect_coordinator(port, host);
+    net::send(socket, {Type::cancel, {id}});
+    const auto response = net::receive(socket);
+    const auto& fields = response.fields;
+    if (response.type == Type::error && fields.size() == 1) throw std::runtime_error(fields[0]);
+    if (response.type != Type::cancellation_status || fields.size() != 3 || fields[0] != id ||
+        !label(fields[0]) || !label(fields[1]) ||
+        (!cancellation_cleanup(fields[2]) && fields[2] != "pending" && fields[2] != "not-requested"))
+        throw std::runtime_error("invalid cancellation status");
+    std::cerr << "[forge] " << fields[0] << ' ' << fields[1] << " cleanup=" << fields[2] << '\n';
+    return fields[1] == "CANCELLED" || fields[1] == "CANCELLING" ? 0 : 1;
+}
 
 void validate_task(const TaskRequest& task) {
     submission(task);
@@ -765,6 +859,10 @@ TaskResult submit_task(std::uint16_t port, const std::string& host, const TaskRe
     if (task.retries != 0 && result.type == Type::job_error && result.fields.size() == 2 && label(result.fields[0]))
         return {result.fields[0], 1, {}, result.fields[1], false, false, true};
     const auto& fields = result.fields;
+    if (result.type == Type::cancelled_result && fields.size() == 7 && label(fields[0]) &&
+        fields[1] == "130" && fields[2].size() <= 16384 && fields[3].size() <= 16384 && fields[4] == "0" &&
+        (fields[5] == "0" || fields[5] == "1") && cancellation_cleanup(fields[6]))
+        return {fields[0], 130, fields[2], fields[3], false, fields[5] == "1", false, true, fields[6]};
     if (result.type != Type::result || fields.size() != 6 || !label(fields[0]) || number(fields[1]) > 255 ||
         fields[2].size() > 16384 || fields[3].size() > 16384 ||
         (fields[4] != "0" && fields[4] != "1") || (fields[5] != "0" && fields[5] != "1"))
@@ -800,6 +898,7 @@ int run(std::uint16_t port, const std::string& host, const TaskRequest& task) {
     std::cerr << "[forge] " << result.job_id << " exit=" << result.exit_code << '\n';
     std::cout << result.output;
     std::cerr << result.error;
+    if (result.cancelled) std::cerr << "[forge] CANCELLED cleanup=" << result.cancellation_cleanup << '\n';
     if (result.timed_out) std::cerr << "[forge] execution timed out\n";
     if (result.truncated) std::cerr << "[forge] output truncated at 16384 bytes per stream\n";
     return result.exit_code;

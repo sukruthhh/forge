@@ -21,7 +21,7 @@ repeated fields:
 ```
 
 Fields are binary-safe at the framing layer. Schema validation applies separately.
-Unknown versions/types (outside 1..30), excess fields, trailing bytes, truncated fields, and
+Unknown versions/types (outside 1..34), excess fields, trailing bytes, truncated fields, and
 out-of-range lengths are errors. Reads/writes handle fragmentation and coalescing.
 Each receive shares one absolute monotonic deadline across header and body;
 receiving a few bytes does not reset it. Sending suppresses SIGPIPE and uses a
@@ -33,7 +33,7 @@ message IDs are identical inside TLS; no plaintext negotiation or fallback exist
 
 | ID | Name | Fields |
 |---|---|---|
-| 1 | REGISTER | ID, OS, architecture, CPU decimal, RAM bytes decimal, CUDA `0`/`1`; optional ordered extensions `staging-v1`, `longpoll-v1`, `timing-v1`, `attempt-v1` |
+| 1 | REGISTER | ID, OS, architecture, CPU decimal, RAM bytes decimal, CUDA `0`/`1`; optional ordered extensions `staging-v1`, `longpoll-v1`, `timing-v1`, `attempt-v1`, `cancel-v1` |
 | 2 | HEARTBEAT | None; belongs to the registered connection |
 | 3 | CLUSTER | None; first message on a separate client connection |
 | 4 | OK | None |
@@ -113,12 +113,12 @@ all new application requests. See [batch workloads](batch-workloads.md).
 
 ## Immediate dispatch and phase inspection
 
-Registration accepts six through ten fields. Extensions occupy exact positions:
-seventh staging-v1, eighth longpoll-v1, ninth timing-v1, tenth attempt-v1. Six/seven-field workers
+Registration accepts six through eleven fields. Extensions occupy exact positions:
+seventh staging-v1, eighth longpoll-v1, ninth timing-v1, tenth attempt-v1, eleventh cancel-v1. Six/seven-field workers
 retain immediate heartbeat replies and ordinary RESULT messages. Eight-field
 workers use held idle heartbeats with ordinary results. Nine-field workers must
-send PROFILED_RESULT. Ten-field workers send ATTEMPT_RESULT instead. The stock
-worker advertises all four extensions and requires
+send PROFILED_RESULT. Ten/eleven-field workers send ATTEMPT_RESULT instead. The stock
+worker advertises all five extensions and requires
 an updated coordinator; there is no fallback to an older coordinator.
 
 | ID | Name | Fields |
@@ -176,3 +176,32 @@ ordinary ERROR without inventing an admitted job. Attempts are retained with
 active jobs and the latest 64 finalized results, not persisted across restart.
 See [recovery.md](recovery.md) for transition rules, time budgets and at-least-once
 execution semantics, including possible overlapping processes and side effects.
+
+## Cancellation
+
+| ID | Name | Fields |
+|---|---|---|
+| 31 | CANCEL | One job ID; authenticated client request |
+| 32 | STOP_ATTEMPT | Job ID, current attempt; response to a cancel-v1 worker heartbeat |
+| 33 | CANCELLED_RESULT | Job ID, cancellation exit 130, stdout, stderr, timeout flag 0, truncation flag, cleanup status |
+| 34 | CANCELLATION_STATUS | Job ID, current job state, cleanup status |
+
+CANCEL returns type 34 or ERROR. Status includes CANCELLING while awaiting cleanup;
+other terminal outcomes are preserved. Cleanup values are pending, not-started,
+reported, unconfirmed, or not-requested. Terminal type 33 allows only not-started,
+reported or unconfirmed, with the existing stream bounds. It reaches the waiting
+submission client and LOGS. Normal results remain type 9; old clients require an
+upgrade to decode explicit cancellation.
+
+STOP_ATTEMPT requires the current job/attempt. The normal type-25 result reports
+worker lifecycle completion; only its connection thread owns the socket/SSL object.
+The coordinator accepts results in RUNNING or CANCELLING and uses mutex ordering
+to determine the outcome. Stale/malformed results retire the session and cannot
+confirm cleanup. A five-second cancellation-result budget is checked on messages;
+the existing receive deadline handles silence. Accepted cancellation suppresses
+retry. Reservations remain held until result acceptance or session retirement.
+
+Running cancellation requires the exact eleventh registration field cancel-v1;
+queued and undelivered jobs can be cancelled independently of capability. Existing
+capability snapshots are unchanged. See [cancellation.md](cancellation.md) for
+cleanup uncertainty, completion races, partial output and earlier LOST attempts.

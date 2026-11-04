@@ -57,7 +57,7 @@ scaling, representative workloads and fault recovery metrics remain unverified.
 | A: actual cross-machine execution | TLS execution on separate physical Linux machines; record command origin, failures, and results |
 | B: useful distributed batch workloads | Flat staging and map now work; larger transfers, richer dependency packaging, output-file retrieval, and real-workload physical-machine validation remain |
 | C: fault tolerance | Opt-in bounded worker-loss retries, attempt identity/history, stale-result fencing and at-least-once semantics are implemented; persistence, restart recovery, worker reconnect, broader fault injection and recovery-time measurements remain |
-| D: Linux isolation | Namespaces/cgroups v2, enforced CPU/RAM limits, cancellation and descendant cleanup, tested failure behavior and documented security boundaries |
+| D: Linux isolation | Cancellation with ordinary process-group/workspace cleanup is implemented; namespaces/cgroups v2, CPU/RAM enforcement, stronger descendant control and evaluated security boundaries remain |
 | E: product quality | Practical installation/onboarding, reproducible real-workload benchmarks, meaningful CI/integration coverage, clear documentation, independent user feedback |
 
 November 4 recovery validation: twelve Release suites passed (100.65 seconds).
@@ -66,9 +66,17 @@ after the shutdown fix (28.72 seconds). The final Release four-container TLS tes
 passed active-job failover and attempt history. These are correctness checks;
 no recovery-time metric or physical-machine failure evidence is claimed.
 
+Cancellation now adds queued withdrawal, running CANCELLING/CANCELLED transitions,
+retry suppression, attempt-aware stop delivery and explicit cleanup uncertainty.
+Fourteen suites passed locally in Release (106.09 seconds) and Debug (106.61
+seconds). The TLS bridge fixture checks staged cancellation, workspace cleanup and
+attempt history. Earlier lost attempts remain potentially live; no new performance
+measurement or secure-isolation claim follows from these checks.
+
 CPU/RAM reservations are not enforced limits. Workers currently execute one job
 at a time and report system capacity without cgroup/affinity adjustment. There is
-no general dependency packaging, cancellation API, isolation, or persistent job history.
+no general dependency packaging, namespace/cgroup isolation, or persistent job history.
+The [cancellation API](cancellation.md) preserves uncertainty after worker loss.
 Worker-loss retries are explicit opt-in; see [recovery.md](recovery.md).
 GPU discovery/execution and a native macOS backend remain future capabilities.
 

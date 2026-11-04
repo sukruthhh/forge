@@ -236,7 +236,8 @@ Current active states are QUEUED, ASSIGNED, RUNNING. Terminal states are SUCCEED
 FAILED, TIMED_OUT, LOST, UNSCHEDULABLE, and CANCELLED. A terminal response carries
 exit status or an infrastructure error. RUNNING means assignment is being sent,
 not an acknowledged successful exec. Numbered attempts and opt-in bounded retries
-are implemented; durable history and a cancellation API remain open. Completed
+are implemented; durable history remains open. Explicit cancellation is implemented
+with cleanup evidence as described below. Completed
 results are retained in memory for 64 jobs. By default worker loss fails without
 reassignment; --retries 1..3 permits additional worker-loss attempts.
 
@@ -257,8 +258,8 @@ external writes need idempotency or stronger application-level coordination.
 **Does a failed command always get retried?** No. Only opted-in worker-session loss
 permits another attempt. Command failures, setup/launch errors and execution
 timeouts stay terminal. Retry count is at most three additional attempts, and
-coordinator shutdown prevents further dispatch. A cancellation API and stronger
-process-tree enforcement remain open.
+coordinator shutdown prevents further dispatch. Explicit cancellation prevents
+further attempts; stronger process-tree enforcement remains open.
 
 ## 8. Execution implemented; isolation and security planned
 
@@ -595,7 +596,7 @@ is materially different from a shared-filesystem demo. It remains one Docker hos
 not physical-machine or ARM64 execution evidence.
 
 General dependency/directory packaging, larger streaming uploads, arbitrary output
-artifact retrieval, durable batch metadata, cancellation/retries, namespaces/cgroups,
+artifact retrieval, durable batch metadata, namespaces/cgroups,
 and physical-machine benchmarks are still open. The bundled JSON-summary example
 is a workflow demonstration with synthetic inputs, not a performance experiment.
 
@@ -776,3 +777,50 @@ Debug suite passed (96.91 seconds), followed by final Debug execution/recovery
 checks after tightening shutdown (28.72 seconds). The final Release binary also
 passed the four-container mutual-TLS fixture with active-job recovery and attempt
 inspection. CI runs the full Debug/Release matrix and the Release bridge test.
+
+## Explicit cancellation and cleanup evidence (November 4)
+
+forge cancel JOB uses the same TLS/token gate as other commands. Queued jobs
+finish CANCELLED without dispatch; undelivered ASSIGNED attempts are withdrawn
+under the registry mutex. Running jobs require cancel-v1 and enter CANCELLING.
+The reservation stays held until a validated result or session retirement. The
+same mutex orders dispatch, result acceptance, cancellation and retry. An accepted
+result wins over a later cancel; an accepted cancel wins over later result receipt
+even if execution already ended naturally. Cancellation does not roll back effects.
+
+Stop instructions are heartbeat replies carrying exact job/attempt identity.
+Only the connection thread touches SSL; execution observes an atomic flag and
+performs ordinary process-group cleanup. The flag resets only for a new validated
+assignment. An observed pre-existing cancellation prevents spawn; cancellation
+racing with spawn cannot guarantee no command execution. Workspace destruction
+precedes result delivery, but remains best effort.
+
+Cleanup is pending, not-started, reported or unconfirmed. Lost contact, a five-second
+acknowledgement budget, or coordinator shutdown preserves uncertainty. An earlier
+LOST attempt makes overall cleanup unconfirmed even if the current attempt reports
+cleanup. The earlier orphan may still run. Accepted cancellation always suppresses
+retry, including cancellation between attempts. Older workers retain normal execution
+support; unsupported running cancellation is rejected before changing the job.
+
+run returns cancellation convention 130, distinct from an observed command exit;
+attempts preserves the worker's exit when known. Normal commands exiting 130 remain
+FAILED. Partial streams and truncation flags are retained when available. logs
+retrieves cancelled results successfully; map stores CANCELLED and explicit cleanup
+metadata while independent inputs continue. Cancelling a job does not cancel a
+whole batch/backlog. Old clients must be upgraded for the new terminal result.
+
+Tests cover queued/assigned/running transitions, idempotency, finished jobs, legacy
+workers, reservation retention, retries, stale results, earlier lost attempts,
+unresponsive workers, completion races and coordinator shutdown. A staged map job
+spawns a child; tests verify both stop, the workspace disappears, partial streams
+survive, and the next input succeeds on that same worker. A direct executor check
+verifies already-cancelled work cannot create an external marker. Shared test helpers
+keep recovery/cancellation protocol fixtures consistent. Benchmark admission now
+recognizes CANCELLING as active work instead of treating the cluster as idle.
+
+All fourteen local suites passed in Release (106.09 seconds) and Debug (106.61
+seconds). The four-container mutual-TLS fixture also verifies staged cancellation,
+directory cleanup and cancelled attempt history before exercising worker-loss
+recovery. These are correctness checks on one host, not cancellation-latency,
+physical-machine or isolation evidence. Namespaces, cgroups and stronger descendant
+control remain open. Details: [cancellation.md](cancellation.md).

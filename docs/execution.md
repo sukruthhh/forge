@@ -49,6 +49,12 @@ see [job-inspection.md](job-inspection.md). Bounded flat-file staging and client
 map are described in [batch workloads](batch-workloads.md). --retries defaults to
 zero and permits up to three worker-loss retries; command failures/timeouts stay terminal.
 
+forge cancel JOB explicitly cancels a job. Queued work finishes immediately;
+running work enters CANCELLING, prevents retries and retains its worker reservation
+until a result or session retirement. Explicit cancellation uses a distinct result
+with exit 130 and cleanup evidence. See [cancellation.md](cancellation.md) for
+ordering and process-control limitations.
+
 ## Execution lifecycle
 
 `posix_spawnp` uses explicit argv, the worker's PATH, and inherited environment.

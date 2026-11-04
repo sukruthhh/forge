@@ -33,6 +33,9 @@ if(BUILD_TESTING)
   add_executable(protocol_tests tests/protocol_tests.cpp)
   target_link_libraries(protocol_tests PRIVATE forge_network)
   add_test(NAME protocol COMMAND protocol_tests)
+  add_executable(executor_tests tests/executor_tests.cpp)
+  target_link_libraries(executor_tests PRIVATE forge_network)
+  add_test(NAME executor COMMAND executor_tests)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME network_integration COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/network_integration.py $<TARGET_FILE:forge>)
@@ -49,6 +52,9 @@ if(BUILD_TESTING)
   add_test(NAME recovery_integration COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/recovery_integration.py $<TARGET_FILE:forge>)
   set_tests_properties(recovery_integration PROPERTIES TIMEOUT 90)
+  add_test(NAME cancellation_integration COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cancellation_integration.py $<TARGET_FILE:forge>)
+  set_tests_properties(cancellation_integration PROPERTIES TIMEOUT 90)
   add_test(NAME authentication_integration COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/authentication_integration.py $<TARGET_FILE:forge>)
   set_tests_properties(authentication_integration PROPERTIES TIMEOUT 45)

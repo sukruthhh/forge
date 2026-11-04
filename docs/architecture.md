@@ -203,3 +203,22 @@ survive a killed or partitioned worker and overlap its replacement. At-least-onc
 semantics require explicit caller opt-in. Bounded in-memory retries do not establish
 durability or guarantee success. Recovery tests demonstrate repeated effects and
 surviving children. See [recovery.md](recovery.md) for the contract and open work.
+
+## 013: Cancellation is a state transition plus cleanup evidence
+
+Use the registry mutex to order cancellation against dispatch, result acceptance
+and retry. Queued/undelivered work can finish immediately; running work remains
+CANCELLING with its reservation held until a result or session retirement. Accepted
+cancellation suppresses all subsequent attempts. A capability-negotiated heartbeat
+reply carries the exact job/attempt to stop, preserving single socket ownership.
+The execution flag drives ordinary process-group cleanup and resets only for a
+new assignment. Already-observed cancellation prevents spawning.
+
+Represent cleanup as pending, not-started, reported or unconfirmed. Lost contact,
+acknowledgement expiry and earlier LOST attempts preserve uncertainty. A current
+worker report cannot prove an old process stopped. Keep final output and the
+observed attempt exit when available; run uses cancellation exit 130 as a distinct
+logical convention. Result acceptance before cancellation preserves success/failure;
+cancellation before acceptance preserves CANCELLED even if execution ended naturally.
+These choices avoid promising stopped processes merely because registry state
+changed. See [cancellation.md](cancellation.md) for boundaries and compatibility.

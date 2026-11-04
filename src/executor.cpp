@@ -102,9 +102,13 @@ ExecutionResult execute(const std::vector<std::string>& arguments,
     checked(::posix_spawnattr_setsigdefault(&config.attributes, &defaults));
     checked(::posix_spawnattr_setflags(&config.attributes, POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGDEF));
     checked(::posix_spawnattr_setpgroup(&config.attributes, 0));
+    ExecutionResult result;
+    if (stop.load()) {
+        result.exit_code = 130;
+        return result;
+    }
     pid_t pid = -1;
     const int error = ::posix_spawnp(&pid, argv.front(), &config.actions, &config.attributes, argv.data(), environ);
-    ExecutionResult result;
     if (error) {
         result.exit_code = 127;
         result.error = std::string("cannot execute: ") + std::strerror(error) + '\n';

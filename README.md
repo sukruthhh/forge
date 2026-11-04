@@ -31,6 +31,11 @@ dispatch and outcome. Command failures/timeouts stay terminal. A lost process ca
 survive and repeat external side effects, so only opt in when repetition is
 acceptable. See [recovery semantics](docs/recovery.md) before enabling retries.
 
+`forge cancel JOB` withdraws queued work or requests running cancellation on an
+updated worker. Running jobs remain CANCELLING until a result or session loss;
+cancelled jobs do not retry. Cleanup evidence includes uncertainty from earlier
+lost attempts. See [cancellation semantics](docs/cancellation.md).
+
 See [the canonical framework](docs/canonical-framework.md) and
 [architecture decisions](docs/architecture.md).
 

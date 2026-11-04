@@ -33,7 +33,8 @@ enum class Type : std::uint8_t { register_worker = 1, heartbeat = 2, cluster = 3
                                 attempt_assignment = 23, attempt_staged_assignment = 24,
                                 attempt_result = 25, attempts = 26, attempt_snapshot = 27,
                                 retry_capabilities = 28, retry_capability_snapshot = 29,
-                                job_error = 30 };
+                                job_error = 30, cancel = 31, stop_attempt = 32,
+                                cancelled_result = 33, cancellation_status = 34 };
 struct Message {
     Type type;
     std::vector<std::string> fields;

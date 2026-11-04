@@ -118,6 +118,35 @@ def main():
         plaintext = docker("exec", client, binary, "cluster", "--host", host, check=False)
         if plaintext.returncode == 0 or "require mutual TLS" not in plaintext.stderr:
             raise RuntimeError("remote plaintext policy bypassed")
+        cancel_script = ("import json,os,pathlib,time\n"
+                         "pathlib.Path('/tmp/forge-cancel-started.json').write_text(json.dumps({'cwd':os.getcwd()}))\n"
+                         "time.sleep(20)\n")
+        docker("exec", client, "python3", "-c",
+               "import pathlib,sys; pathlib.Path('/tmp/cancel.py').write_text(sys.argv[1])", cancel_script)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(execute, client, "client", binary, "run", "--host", host,
+                                  "--retries", "1", "--file", "/tmp/cancel.py", "--", "python3", "cancel.py", check=False)
+            started = []
+            def cancellation_started():
+                started[:] = [name for name in (worker_a, worker_b)
+                              if docker("exec", name, "test", "-s", "/tmp/forge-cancel-started.json", check=False).returncode == 0]
+                return len(started) == 1
+            wait_for(cancellation_started, "staged cancellation fixture never started")
+            owner = started[0]
+            workspace = json.loads(docker("exec", owner, "cat", "/tmp/forge-cancel-started.json").stdout)["cwd"]
+            listing = execute(client, "client", binary, "ps", "--host", host).stdout
+            active = [row.split("\t") for row in listing.splitlines()[1:] if "\tRUNNING\t" in row]
+            if len(active) != 1:
+                raise RuntimeError("cancellation fixture did not own exactly one running job")
+            job_id = active[0][0]
+            execute(client, "client", binary, "cancel", job_id, "--host", host)
+            cancelled = pending.result(timeout=15)
+            if cancelled.returncode != 130 or "CANCELLED cleanup=reported" not in cancelled.stderr:
+                raise RuntimeError("mutual-TLS cancellation did not report completed cleanup")
+            docker("exec", owner, "python3", "-c", "import pathlib,sys; assert not pathlib.Path(sys.argv[1]).exists()", workspace)
+            attempts = execute(client, "client", binary, "attempts", job_id, "--host", host)
+            if "attempts=1/2" not in attempts.stderr or "\tCANCELLED\t" not in attempts.stdout:
+                raise RuntimeError("cancelled TLS attempt was retried or not retained")
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             pending = pool.submit(execute, client, "client", binary, "run", "--host", host,
                                   "--retries", "1", "--timeout", "10", "--", "python3", "-c",
@@ -141,7 +170,7 @@ def main():
                 raise RuntimeError("cross-container recovery did not retain both execution attempts")
         wait_for(lambda: "DEAD" in cluster().stdout, "worker-container loss not detected")
         execute(client, "client", binary, "run", "--host", host, "--", "/bin/true")
-        print("PASS: mutual TLS across four containers; staged map, ordered results, cleanup, external benchmark smoke, ps/logs, active-job recovery, attempt history, remaining capacity.")
+        print("PASS: mutual TLS across four containers; staged map, ordered results, cancellation and cleanup, external benchmark smoke, ps/logs, active-job recovery, attempt history, remaining capacity.")
         print("This verifies separate network namespaces on one Docker host, not separate physical machines or performance.")
     finally:
         for name in reversed(created):

@@ -32,7 +32,7 @@ The following policies are deliberate:
 | Valid success, nonzero command exit, launch/setup failure, or explicit execution timeout | Accept the result and finish; do not retry |
 | No compatible capacity | Wait at most five seconds for each queue admission; finish UNSCHEDULABLE if it expires |
 | Retry budget exhausted | Finish LOST and retain every attempt |
-| Coordinator stopping | Cancel pending work without scheduling another attempt |
+| Explicit cancellation or coordinator stopping | Prevent further attempts; explicit running cancellation reports cleanup evidence |
 | Client disconnect or unknown submission response | No automatic client resubmission; an accepted job can continue |
 
 On loss, the coordinator retires the worker and releases its reservation before
@@ -77,9 +77,12 @@ Graceful worker shutdown and detected coordinator disconnection cancel the local
 process group. SIGKILL, machine failure or a partition cannot guarantee cleanup.
 An old child and its working directory can survive. Attempt fencing only protects
 coordinator results, not databases, files or other external effects. Namespace
-isolation, cgroups, stronger process-tree control, cancellation, durable state,
+isolation, cgroups, stronger process-tree control, durable state,
 automatic worker reconnect and coordinator restart recovery remain future work.
 There is no exactly-once execution claim.
+
+The [cancellation API](cancellation.md) stops current ordinary process groups when
+the worker responds. Prior lost attempts remain uncertain and are not claimed stopped.
 
 ## Inspection and output ownership
 

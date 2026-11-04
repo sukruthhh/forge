@@ -56,6 +56,7 @@ struct Entry {
 std::string state(const Entry& entry) {
     if (!entry.submitted) return "NOT_SUBMITTED";
     if (entry.result.infrastructure_error) return "ERROR";
+    if (entry.result.cancelled) return "CANCELLED";
     if (entry.result.timed_out) return "TIMED_OUT";
     return entry.result.exit_code == 0 ? "SUCCEEDED" : "FAILED";
 }
@@ -66,11 +67,14 @@ std::string record(std::size_t index, const Entry& entry) {
         ",\"exit_code\":" + (result.infrastructure_error ? "null" : std::to_string(result.exit_code)) +
         ",\"timed_out\":" + (result.timed_out ? "true" : "false") +
         ",\"truncated\":" + (result.truncated ? "true" : "false") +
+        ",\"cancelled\":" + (result.cancelled ? "true" : "false") +
+        ",\"cancellation_cleanup\":" + (result.cancelled ? quote(result.cancellation_cleanup) : "null") +
         ",\"storage_complete\":" + (entry.stored ? "true" : "false") +
         ",\"elapsed_seconds\":" + (entry.submitted ? std::to_string(entry.elapsed_seconds) : "null") +
         ",\"stdout\":" + (entry.submitted ? quote(prefix(index) + ".stdout") : "null") +
         ",\"stderr\":" + (entry.submitted ? quote(prefix(index) + ".stderr") : "null") +
-        ",\"diagnostic\":" + quote(result.infrastructure_error ? result.error : "") + "}";
+        ",\"diagnostic\":" + quote(result.infrastructure_error ? result.error :
+            result.cancelled ? "cancellation cleanup: " + result.cancellation_cleanup : "") + "}";
 }
 }
 

@@ -128,7 +128,8 @@ Cleanup is best effort. A killed worker can leave its directory or children behi
 cleanup errors are logged on the worker. Trusted commands can access the worker's
 other files, network, environment, and credentials and can deliberately escape
 their process group. A private working directory does not establish isolation.
-Namespaces, cgroups, stronger cleanup, and cancellation remain separate work.
+Namespaces, cgroups and stronger cleanup remain separate work. Individual jobs
+support [explicit cancellation](cancellation.md), including cleanup evidence.
 
 Worker loss or a network error produces a per-input ERROR and the batch continues
 where capacity allows. A failed response can leave submission outcome unknown;
@@ -150,5 +151,12 @@ verifies staged map tasks on both workers over TLS, with no source directory
 visible there. These are correctness tests, not performance benchmarks.
 
 Larger streaming uploads, directory/dependency packages, output-file retrieval,
-durable batch state, cancellation, and physical-machine validation remain
+durable batch state, whole-batch cancellation, and physical-machine validation remain
 open. Current map collects stdout/stderr, not arbitrary files produced by jobs.
+
+forge cancel JOB cancels one admitted map input, not the batch backlog. A cancelled
+input saves state CANCELLED, exit_code 130, cancelled=true and cancellation_cleanup;
+other inputs continue. Non-cancelled rows use cancelled=false and null cleanup.
+Exit 130 is a Forge cancellation convention, not an invented observed command
+exit. Partial streams are retained when available; map returns 1 for any cancelled
+input. Unknown cleanup stays explicit, especially after earlier LOST attempts.

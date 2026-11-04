@@ -6,6 +6,7 @@ Run these against the same coordinator used to submit work:
     forge logs job-1
     forge timings job-1
     forge attempts job-1
+    forge cancel job-1
 
 Both accept --port PORT. ps shows ID, STATE, WORKER, EXIT, and a bounded command
 summary. summaries replace control/non-ASCII bytes with ? for display and are not
@@ -35,10 +36,16 @@ retry eligibility, time budgets, retention and repeated-side-effect risks.
 - TIMED_OUT: worker reported an explicit execution timeout.
 - LOST: worker session failed before an accepted result.
 - UNSCHEDULABLE: no placement within five seconds.
-- CANCELLED: submission interrupted by coordinator shutdown; not a cancellation API.
+- CANCELLING: cancellation accepted, awaiting worker result or session retirement.
+- CANCELLED: explicit cancellation finalized, or submission interrupted by shutdown.
 
 Exit is shown only for command results. Worker loss is not a synthetic command
 exit code, and a normal nonzero command result is distinct from infrastructure loss.
+
+Explicit cancellation uses exit 130 as a Forge convention, not an observed command
+exit. Cleanup evidence remains separate; attempts preserves an observed worker
+exit when available. Cancelled partial logs are retrievable. See
+[cancellation.md](cancellation.md) for ordering and cleanup limits.
 
 Completed stdout/stderr and timeout/truncation flags are retained for the latest
 64 jobs transferred into history, ordered by submission-handler finalization.
