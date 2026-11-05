@@ -57,7 +57,7 @@ scaling, representative workloads and fault recovery metrics remain unverified.
 | A: actual cross-machine execution | TLS execution on separate physical Linux machines; record command origin, failures, and results |
 | B: useful distributed batch workloads | Flat staging and map now work; larger transfers, richer dependency packaging, output-file retrieval, and real-workload physical-machine validation remain |
 | C: fault tolerance | Opt-in bounded worker-loss retries, attempt identity/history, stale-result fencing and at-least-once semantics are implemented; persistence, restart recovery, worker reconnect, broader fault injection and recovery-time measurements remain |
-| D: Linux isolation | Cancellation with ordinary process-group/workspace cleanup is implemented; namespaces/cgroups v2, CPU/RAM enforcement, stronger descendant control and evaluated security boundaries remain |
+| D: Linux isolation | Cancellation, visible affinity/cgroup capacity discovery, delegated cgroup-v2 CPU/RAM caps and cgroup-wide cleanup are implemented; namespaces, credentials/privileges, broader process controls and evaluated security boundaries remain |
 | E: product quality | Practical installation/onboarding, reproducible real-workload benchmarks, meaningful CI/integration coverage, clear documentation, independent user feedback |
 
 November 4 recovery validation: twelve Release suites passed (100.65 seconds).
@@ -73,12 +73,28 @@ seconds). The TLS bridge fixture checks staged cancellation, workspace cleanup a
 attempt history. Earlier lost attempts remain potentially live; no new performance
 measurement or secure-isolation claim follows from these checks.
 
-CPU/RAM reservations are not enforced limits. Workers currently execute one job
-at a time and report system capacity without cgroup/affinity adjustment. There is
-no general dependency packaging, namespace/cgroup isolation, or persistent job history.
+CPU/RAM reservations alone remain accounting. --enforce-limits now requires a
+probed cgroup2-v1 worker and positive memory cap. Discovery accounts for affinity,
+visible quotas and memory headroom at registration. Workers execute one job at a
+time. There is no general dependency packaging, namespace isolation or persistent history.
 The [cancellation API](cancellation.md) preserves uncertainty after worker loss.
 Worker-loss retries are explicit opt-in; see [recovery.md](recovery.md).
 GPU discovery/execution and a native macOS backend remain future capabilities.
+
+Resource validation: sixteen local suites passed in Release (112.15 seconds) and
+Debug (112.57 seconds), with additional actual-affinity checks passing afterward.
+The private TLS bridge fixture passed. A separate real-kernel fixture verifies
+CPU throttling, memory OOM, setsid cleanup, staged map, timeout/cancel, missing and
+readonly delegation, migration refusal, a correctly delegated unprivileged user,
+setup failure and worker retirement after failed cleanup. Only the disposable
+container's cgroup subtree is changed. This is not a performance or sandbox claim.
+See [resource-enforcement.md](resource-enforcement.md) for setup and limits.
+
+November 5 resumption: fresh builds passed all sixteen suites in Release
+(112.89 seconds) and Debug (111.77 seconds). Real-kernel enforcement checks passed
+with both binaries, and the four-container mutual-TLS fixture passed. These
+durations describe test runs, not performance results. Remote CI must be checked
+for the published commit separately.
 
 ## Physical test fleet: preparation pending
 

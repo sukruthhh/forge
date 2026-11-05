@@ -222,3 +222,23 @@ logical convention. Result acceptance before cancellation preserves success/fail
 cancellation before acceptance preserves CANCELLED even if execution ended naturally.
 These choices avoid promising stopped processes merely because registry state
 changed. See [cancellation.md](cancellation.md) for boundaries and compatibility.
+
+## 014: Discover visible capacity and enforce limits before workload exec
+
+Advertise CPU affinity constrained by visible ancestor quotas and memory headroom
+constrained by ancestor limits. Floor CPU quotas to the scheduler's whole-CPU
+model; reject workers below one CPU rather than overstate available capacity.
+These are registration snapshots, not guarantees against unrelated load.
+
+Use an explicitly delegated cgroup-v2 job parent. Before advertising cgroup2-v1,
+launch and clean up a confined probe to verify controller and migration access.
+The spawn helper joins a fresh attempt cgroup before executing the workload.
+--enforce-limits requires this capability and positive memory; never silently
+fall back to accounting-only workers. Configured workers apply requested CPU and
+nonzero memory caps even without the strict flag.
+
+Kill the cgroup as well as the ordinary process group, wait for it to become
+empty and remove only the owned directory. Cleanup failure retires the worker
+without reporting success. Crash orphans still require administrative teardown.
+This improves trusted-workload resource control; it supplies neither namespace
+isolation nor a secure sandbox. See [resource-enforcement.md](resource-enforcement.md).

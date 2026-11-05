@@ -21,7 +21,7 @@ repeated fields:
 ```
 
 Fields are binary-safe at the framing layer. Schema validation applies separately.
-Unknown versions/types (outside 1..34), excess fields, trailing bytes, truncated fields, and
+Unknown versions/types (outside 1..40), excess fields, trailing bytes, truncated fields, and
 out-of-range lengths are errors. Reads/writes handle fragmentation and coalescing.
 Each receive shares one absolute monotonic deadline across header and body;
 receiving a few bytes does not reset it. Sending suppresses SIGPIPE and uses a
@@ -33,7 +33,7 @@ message IDs are identical inside TLS; no plaintext negotiation or fallback exist
 
 | ID | Name | Fields |
 |---|---|---|
-| 1 | REGISTER | ID, OS, architecture, CPU decimal, RAM bytes decimal, CUDA `0`/`1`; optional ordered extensions `staging-v1`, `longpoll-v1`, `timing-v1`, `attempt-v1`, `cancel-v1` |
+| 1 | REGISTER | ID, OS, architecture, CPU decimal, RAM bytes decimal, CUDA `0`/`1`; optional ordered extensions `staging-v1`, `longpoll-v1`, `timing-v1`, `attempt-v1`, `cancel-v1`, `cgroup2-v1` |
 | 2 | HEARTBEAT | None; belongs to the registered connection |
 | 3 | CLUSTER | None; first message on a separate client connection |
 | 4 | OK | None |
@@ -43,9 +43,10 @@ message IDs are identical inside TLS; no plaintext negotiation or fallback exist
 
 Registration IDs, OS, and architecture labels are 1..64 ASCII letters, digits,
 dots, underscores, or hyphens. CPU is 1..1048576; RAM is a positive uint64.
-The stock worker detects Linux architecture and system CPU/RAM totals and
-conservatively advertises CUDA=0. It does not account for cgroup limits or CPU
-affinity yet. Claimed resources are not enforced or authenticated.
+The stock worker detects Linux architecture, effective whole-CPU availability and
+registration-time memory headroom within visible affinity/cgroup limits. CUDA=0
+remains conservative. Capacity/capability claims are trusted, not attested; actual
+enforcement requires the delegated backend. See [resources](resource-enforcement.md).
 
 ## Sessions and bounds
 
@@ -113,12 +114,14 @@ all new application requests. See [batch workloads](batch-workloads.md).
 
 ## Immediate dispatch and phase inspection
 
-Registration accepts six through eleven fields. Extensions occupy exact positions:
-seventh staging-v1, eighth longpoll-v1, ninth timing-v1, tenth attempt-v1, eleventh cancel-v1. Six/seven-field workers
+Registration accepts six through twelve fields. Extensions occupy exact positions:
+seventh staging-v1, eighth longpoll-v1, ninth timing-v1, tenth attempt-v1, eleventh
+cancel-v1, twelfth cgroup2-v1. Six/seven-field workers
 retain immediate heartbeat replies and ordinary RESULT messages. Eight-field
 workers use held idle heartbeats with ordinary results. Nine-field workers must
-send PROFILED_RESULT. Ten/eleven-field workers send ATTEMPT_RESULT instead. The stock
-worker advertises all five extensions and requires
+send PROFILED_RESULT. Workers with ten or more fields send ATTEMPT_RESULT instead.
+Stock workers advertise the first five extensions and add cgroup2-v1 only after
+delegation/probe validation. They require
 an updated coordinator; there is no fallback to an older coordinator.
 
 | ID | Name | Fields |
@@ -205,3 +208,26 @@ Running cancellation requires the exact eleventh registration field cancel-v1;
 queued and undelivered jobs can be cancelled independently of capability. Existing
 capability snapshots are unchanged. See [cancellation.md](cancellation.md) for
 cleanup uncertainty, completion races, partial output and earlier LOST attempts.
+
+## Resource enforcement
+
+| ID | Name | Fields |
+|---|---|---|
+| 35 | LIMITED_ASSIGNMENT | Job ID, attempt, timeout, CPU, RAM, argv |
+| 36 | LIMITED_STAGED_ASSIGNMENT | Job ID, attempt, timeout, CPU, RAM, file count, file triples, argv |
+| 37 | LIMITED_SUBMIT | CPU, RAM, timeout, OS, architecture, retries 0..3, argv |
+| 38 | LIMITED_STAGED_SUBMIT | CPU, RAM, timeout, OS, architecture, retries 0..3, file count, file triples, argv |
+| 39 | RESOURCE_CAPABILITIES | None; authenticated query used by cluster --details and enforced-map admission |
+| 40 | RESOURCE_SNAPSHOT | Ten-field rows: six registration capabilities, state, staging flag, attempt flag, cgroup flag |
+
+Enforced submissions require positive memory bytes and cgroup2-v1 eligibility;
+existing retry 21/22 schemas still require retries 1..3. Configured workers receive
+35/36 for every job, including ordinary submissions; other workers retain 23/24
+or their legacy assignments. A worker rejects mismatched enforcement framing or
+limits exceeding its advertised capacity. No unenforced fallback exists.
+
+Results retain their negotiated schema. Setup failure is command exit 125;
+cleanup failure retires the worker without claiming completed cleanup. Admission
+validates the largest possible assignment header, including resources, before
+allocating a job. Existing cluster/capability snapshots remain unchanged; new
+queries preserve old clients. See [resource-enforcement.md](resource-enforcement.md).

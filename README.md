@@ -86,13 +86,17 @@ Stop a worker and inspect the cluster again to see its DEAD record. Connections
 default to `127.0.0.1`. To configure encrypted network endpoints, use the
 [TLS setup and separate-machine checklist](docs/network-setup.md). Network behavior
 has local-process and Docker-bridge tests; physical-machine validation is pending.
-The worker currently reports system CPU/RAM totals without accounting for
-container limits and advertises CUDA as unavailable.
+Workers report registration-time CPU affinity/quota and memory headroom within
+visible cgroup restrictions. CUDA detection remains unavailable.
 
 `run` executes trusted commands, with optional bounded flat-file staging. Captured output is
 limited to 16 KiB per stream, and runtime to 30 seconds. CPU/RAM reservations are
-not OS-enforced limits. General dependency packaging, sandboxing,
-persistent history and automatic retries are not implemented yet. Optional additional
+placement accounting on ordinary workers. `join --cgroup-root PATH` enables a
+validated cgroup-v2 backend; `run/map --enforce-limits --memory BYTES` requires it.
+Use `cluster --details` to inspect capability. See [resource enforcement](docs/resource-enforcement.md)
+for delegation, discovery bounds and kernel tests. General dependency packaging,
+namespace isolation and persistent history remain open. Worker-loss retries are
+explicit opt-in as described above. Optional additional
 authentication uses `FORGE_TOKEN`; see [authentication](docs/authentication.md)
 and the [recovery audit](docs/recovery-audit.md).
 

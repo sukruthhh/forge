@@ -58,8 +58,10 @@ guarantee. The flag resets only for a new validated assignment.
 
 Process-group escapes, SIGKILL, partitions, permission failures and hostile jobs
 remain outside guaranteed cleanup. Workspace removal is best effort. Prior lost
-attempts may survive. Namespaces/cgroups remain unimplemented; there is no secure
-sandbox or complete descendant-control claim. See [recovery.md](recovery.md).
+attempts may survive. Configured workers now use cgroup-wide descendant cleanup,
+including process-group escapes; see [resource enforcement](resource-enforcement.md).
+Namespaces remain unimplemented; there is no secure sandbox or guaranteed cleanup
+after worker loss. See [recovery.md](recovery.md).
 
 ## Results and map
 

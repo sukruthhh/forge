@@ -1,8 +1,9 @@
 # Forge interview reference
 
-Updated: November 3, 2026
+Updated: November 5, 2026
 
-Implementation baseline: Linux runtime with mutual TLS, bounded staging, and parallel map (November 3)
+Implementation baseline: Linux runtime with TLS, staging/map, attempts/retries,
+cancellation and delegated cgroup-v2 enforcement.
 
 Stack: **C++20 | Linux | TCP/IP | CMake**
 
@@ -29,9 +30,11 @@ programmable compute cluster.
 > explicit commands on workers, collects output and exit status, and handles
 > runtime limits and worker loss. Optional shared-token authentication gates local
 > sessions. I then added mutual TLS and explicit IPv4 endpoints, with network tests
-> across separate containers. Physical-machine validation and retries are next.
+> across separate containers. Bounded worker-loss retries and cancellation are
+> implemented; physical-machine validation is pending.
 > Bounded file staging and map now distribute independent inputs and save per-task
-> results; larger packaging and isolation remain open.
+> results. Visible affinity/cgroup discovery and delegated CPU/RAM enforcement
+> are implemented; larger packaging and namespace isolation remain open.
 
 **Longer explanation:** The target user owns several machines with different
 resources but otherwise submits work to each machine manually. Forge should make
@@ -50,14 +53,14 @@ motivation in your own words rather than presenting this document as a script.
 | Capability | Current evidence |
 |---|---|
 | C++20 library and CLI built with CMake | Compiled in an Ubuntu 24.04 development container using GCC 13.3 and Ninja |
-| CLI | help, version, coordinator, join, cluster, run, ps, logs; version 0.1.0-dev |
+| CLI | help/version, coordinator/join, cluster/details, run/map, ps/logs, timings, attempts, cancel; version 0.1.0-dev |
 | Worker/job resource data models | `include/forge/scheduler.hpp` |
 | Compatibility and free-resource checks | `src/scheduler.cpp`, covered by scheduler tests |
 | Resource-aware placement heuristic | Implemented and tested, including deterministic ties |
 | Test runner | Scheduler, protocol, and real TCP/subprocess integration suites; see validation record below |
-| GitHub Actions | Workflow configured; its remote execution has not been verified in this reference |
+| GitHub Actions | Debug/Release suites and TLS fixture verified on earlier milestone commits; new pushes require checking their own workflow |
 | Coordinator, worker agents, TCP protocol | Registration, liveness, inspection, submission, assignment, and results; loopback and Docker bridge tests |
-| Automatic capability detection | Worker reports Linux architecture and system CPU/RAM totals; no cgroup adjustment or GPU discovery |
+| Automatic capability detection | Linux architecture, visible CPU affinity/quota and memory headroom; registration snapshot, no GPU discovery |
 | Round-robin and least-loaded policies | Planned; only the resource-aware heuristic exists |
 | Worker process execution | Implemented: explicit argv, output/exit capture, runtime/output bounds, one job per worker |
 | Job inspection and retained logs | Implemented: active jobs plus 64 finalized results in memory, explicit terminal states |
@@ -67,8 +70,10 @@ motivation in your own words rather than presenting this document as a script.
 | Heartbeats | Implemented with READY/SUSPECT/DEAD inspection and session deadlines |
 | Authentication and encryption | Mutual TLS 1.3 for IPv4 endpoints; optional FORGE_TOKEN gate; no per-worker identity binding or roles |
 | Explicit workload architecture | run defaults to native; exact labels and explicit any override; heterogeneous placement tested with simulated advertisements |
-| Retries and attempt tracking | Planned |
-| Namespaces and cgroups v2 | Planned |
+| Retries and attempt tracking | Explicit worker-loss retries 0..3, session-owned attempt fencing and bounded history |
+| Cancellation | Queued/running cancellation, retry prevention and explicit cleanup uncertainty |
+| cgroups v2 | Delegated CPU/RAM enforcement, confined startup probe and cgroup-wide cleanup; real-kernel fixture |
+| Namespace isolation | Planned |
 | Native macOS workers and CUDA placement | Planned; current matching only checks a supplied CUDA boolean |
 | Physical-machine benchmarks and external users | No results or user evidence yet |
 
@@ -85,7 +90,7 @@ GitHub Actions results remain unverified here.
 Do not describe CUDA flags as GPU discovery, resource checks as enforced limits,
 or a container test as a benchmark across physical machines. The live registry
 is now wired into scheduler reservations and execution. Reservations remain
-placement accounting, not kernel resource enforcement.
+placement accounting unless a configured cgroup backend applies kernel caps.
 
 ## 3. Intended user experience
 
@@ -755,8 +760,9 @@ partition can leave an old child running after a replacement starts. At-least-on
 semantics allow repeated side effects; bounded retries guarantee neither execution
 nor success. The test observes a surviving first child and two external writes,
 then cleans up only its owned process group/workspace. Exactly-once execution,
-durable coordinator recovery, automatic reconnect, namespaces and cgroups remain
-unimplemented. Only opt in when repetition is acceptable.
+durable coordinator recovery, automatic reconnect and namespaces remain
+unimplemented. Cgroup enforcement was added subsequently, as described below;
+it does not guarantee cleanup after worker loss. Only opt in when repetition is acceptable.
 
 Coverage includes default loss, all four permitted attempts, exhaustion, unavailable
 capacity, legacy gating, invalid retry options, reused IDs, stale-result rejection,
@@ -822,5 +828,46 @@ All fourteen local suites passed in Release (106.09 seconds) and Debug (106.61
 seconds). The four-container mutual-TLS fixture also verifies staged cancellation,
 directory cleanup and cancelled attempt history before exercising worker-loss
 recovery. These are correctness checks on one host, not cancellation-latency,
-physical-machine or isolation evidence. Namespaces, cgroups and stronger descendant
-control remain open. Details: [cancellation.md](cancellation.md).
+physical-machine or isolation evidence. At this milestone cgroups were still open;
+the subsequent implementation is described below. Namespaces remain open.
+Details: [cancellation.md](cancellation.md).
+
+## Visible capacity and cgroup-v2 enforcement
+
+Workers now discover affinity and visible ancestor CPU quotas, flooring quotas to
+whole CPUs. Memory is bounded by physical MemAvailable and ancestor
+memory.max minus memory.current. Configured job parents are considered too.
+Discovery fails closed on malformed controls or unavailable unified-v2 visibility.
+Capacity is a registration-time snapshot; it does not track ongoing external load.
+
+join --cgroup-root selects administrator-provisioned delegation. A confined
+/bin/true startup probe validates actual migration and cleanup before registration.
+run/map --enforce-limits requires cgroup2-v1 plus positive memory, with no fallback.
+Each attempt has cpu.max, memory.max, zero swap for bounded jobs, and group OOM
+handling. A private spawn helper joins before exec; helper startup and staging
+allocations remain outside the job cap. Unconfigured workers retain accounting
+only. Configured workers enforce CPU and nonzero memory requests for all jobs.
+
+Normal completion, timeout and cancellation kill the cgroup, including setsid
+descendants. Cleanup waits for populated=0 and removes the owned directory.
+Setup failure returns 125 without launching unrestricted work; an observed OOM
+counter adds a diagnostic, rather than inferring OOM from exit 137 alone.
+Cleanup failure retires the worker and preserves cancellation uncertainty.
+Worker SIGKILL can still leave orphaned groups. Privileged jobs can bypass these
+controls; namespaces and credential filtering are not implemented.
+
+Sixteen local suites passed in both Debug and Release, followed by actual-affinity
+checks. The private TLS bridge passed. Separate real-kernel fixtures in both builds
+verify CPU throttling, memory OOM, process-group escapes, timeout/cancel, staged
+map, missing/readonly delegation, migration refusal, properly delegated unprivileged
+execution, setup failure and cleanup-failure retirement. Parser fixtures alone
+are not kernel evidence. These checks establish correctness in disposable
+containers, not physical-machine scaling, new performance results or sandbox security.
+
+Interview question: why both reservations and cgroups? Reservations avoid admitting
+more requested capacity than advertised; cgroups bound actual consumption for
+configured workers. Neither guarantees capacity against other host activity.
+Why a startup probe? Writable controls alone do not establish permission to migrate
+the workload from the worker's leaf to the delegated job child. Why retire after
+cleanup failure? Reusing that worker would hide uncertain remaining resources.
+Full setup and limitations: [resource-enforcement.md](resource-enforcement.md).

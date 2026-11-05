@@ -24,7 +24,9 @@ removes the architecture constraint. GPU requests are not exposed yet. The
 existing resource-aware scheduler chooses a connected, recently heard-from, idle
 compatible worker. The registry mutex covers selection AND reservation, so
 concurrent clients cannot reserve the same slot. Each worker holds one job, even
-if CPU remains unused. CPU/RAM reservations are not enforced OS limits.
+if CPU remains unused. Reservations alone are placement accounting. Configured
+cgroup workers enforce requested limits; --enforce-limits requires that backend
+and a positive memory cap. See [resource enforcement](resource-enforcement.md).
 
 Jobs transition from QUEUED to ASSIGNED to RUNNING, then to an explicit terminal state. RUNNING means assignment
 is being delivered, not that exec succeeded. A terminal state carries a command result or
@@ -82,12 +84,14 @@ process-tree lifecycle control later.
 
 Optional shared-token authentication is available through FORGE_TOKEN; see
 [authentication.md](authentication.md). Non-loopback IPv4 connections require
-[mutual TLS](network-setup.md). Environment filtering, namespaces, and cgroups
-do not exist yet.
+[mutual TLS](network-setup.md). Environment filtering and namespace isolation
+remain open. A delegated cgroup-v2 backend now provides opt-in CPU/RAM caps and
+stronger descendant cleanup; it is not a hostile-workload sandbox.
 Loopback is a development restriction, not authentication: local users able to
 connect can submit commands as the worker's user when TLS and FORGE_TOKEN are unset.
-TLS certificate holders are trusted to submit commands. Capability totals do not
-yet account for container resource limits.
+TLS certificate holders are trusted to submit commands. Capacity discovery now
+accounts for affinity and visible cgroup limits/headroom at registration; it is
+not live utilization telemetry or a guaranteed reservation against host load.
 
 ## Protocol extensions
 

@@ -77,8 +77,10 @@ Graceful worker shutdown and detected coordinator disconnection cancel the local
 process group. SIGKILL, machine failure or a partition cannot guarantee cleanup.
 An old child and its working directory can survive. Attempt fencing only protects
 coordinator results, not databases, files or other external effects. Namespace
-isolation, cgroups, stronger process-tree control, durable state,
-automatic worker reconnect and coordinator restart recovery remain future work.
+isolation, durable state, automatic worker reconnect and coordinator restart
+recovery remain future work. Configured workers now use cgroups v2 for limits
+and descendant cleanup, but worker SIGKILL can still leave orphaned work;
+see [resource enforcement](resource-enforcement.md).
 There is no exactly-once execution claim.
 
 The [cancellation API](cancellation.md) stops current ordinary process groups when

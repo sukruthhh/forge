@@ -22,3 +22,6 @@ jobs:
       - name: Test cluster over private Docker network
         if: matrix.build_type == 'Release'
         run: python3 scripts/test-container-cluster.py --binary build/forge
+      - name: Test real cgroup enforcement in private namespace
+        if: matrix.build_type == 'Release'
+        run: python3 scripts/test-cgroup-enforcement.py --binary build/forge

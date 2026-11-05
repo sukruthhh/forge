@@ -128,7 +128,9 @@ Cleanup is best effort. A killed worker can leave its directory or children behi
 cleanup errors are logged on the worker. Trusted commands can access the worker's
 other files, network, environment, and credentials and can deliberately escape
 their process group. A private working directory does not establish isolation.
-Namespaces, cgroups and stronger cleanup remain separate work. Individual jobs
+Namespaces remain future work. Configured workers now provide cgroup-v2 limits
+and descendant cleanup; map --enforce-limits requires that capability and positive
+memory requests. See [resource enforcement](resource-enforcement.md). Individual jobs
 support [explicit cancellation](cancellation.md), including cleanup evidence.
 
 Worker loss or a network error produces a per-input ERROR and the batch continues

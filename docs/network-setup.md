@@ -73,7 +73,9 @@ In another Linux terminal with client credentials configured:
 ./build/forge logs job-1 --host 192.168.1.50
 ```
 
-Commands and inputs must already exist on workers. All executables still target
+Executables and dependencies must already exist on workers. Inputs can be sent
+with --file or map's bounded staging; see [batch workloads](batch-workloads.md).
+All executables still target
 Linux; these examples do not establish a native Windows or macOS CLI/backend.
 Submissions default to the CLI's architecture. For a portable workload installed
 on both x86_64 and aarch64 Linux workers, explicitly use --arch any; use an exact

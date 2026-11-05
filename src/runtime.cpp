@@ -2,6 +2,7 @@
 #include "forge/network.hpp"
 #include "forge/executor.hpp"
 #include "forge/scheduler.hpp"
+#include "forge/resources.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -15,13 +16,13 @@
 #include <future>
 #include <iostream>
 #include <map>
+#include <limits>
 #include <mutex>
 #include <memory>
 #include <optional>
 #include <poll.h>
 #include <stdexcept>
 #include <sys/socket.h>
-#include <sys/sysinfo.h>
 #include <sys/utsname.h>
 #include <thread>
 #include <unistd.h>
@@ -94,11 +95,15 @@ std::string target_architecture(const std::string& architecture) {
 }
 Message assignment(const std::string& id, std::uint32_t timeout,
                    const std::vector<std::string>& arguments, const std::vector<InputFile>& files,
-                   std::uint32_t attempt = 0) {
+                   std::uint32_t attempt = 0, const Resources* limits = nullptr) {
     Message message{files.empty() ? Type::assignment : Type::staged_assignment, {id, std::to_string(timeout)}};
     if (attempt != 0) {
         message.type = files.empty() ? Type::attempt_assignment : Type::attempt_staged_assignment;
         message.fields.insert(message.fields.begin() + 1, std::to_string(attempt));
+    }
+    if (limits) {
+        message.type = files.empty() ? Type::limited_assignment : Type::limited_staged_assignment;
+        message.fields.insert(message.fields.end(), {std::to_string(limits->cpu), std::to_string(limits->memory_bytes)});
     }
     if (!files.empty()) append_inputs(message.fields, files);
     message.fields.insert(message.fields.end(), arguments.begin(), arguments.end());
@@ -106,6 +111,7 @@ Message assignment(const std::string& id, std::uint32_t timeout,
 }
 Message submission(const TaskRequest& task) {
     if (task.cpu == 0 || task.cpu > 1048576 || task.timeout == 0 || task.timeout > 30 || task.retries > 3 ||
+        (task.enforce_limits && task.memory == 0) ||
         task.arguments.empty() || task.arguments.size() > 128 || task.arguments[0].empty())
         throw std::runtime_error("invalid job resources, timeout, or arguments");
     for (const auto& argument : task.arguments)
@@ -114,14 +120,16 @@ Message submission(const TaskRequest& task) {
     Message request{task.files.empty() ? Type::submit : Type::staged_submit,
         {std::to_string(task.cpu), std::to_string(task.memory), std::to_string(task.timeout),
          "linux", target_architecture(task.architecture)}};
-    if (task.retries != 0) {
-        request.type = task.files.empty() ? Type::retry_submit : Type::retry_staged_submit;
+    if (task.retries != 0 || task.enforce_limits) {
+        request.type = task.enforce_limits ? (task.files.empty() ? Type::limited_submit : Type::limited_staged_submit) :
+            task.files.empty() ? Type::retry_submit : Type::retry_staged_submit;
         request.fields.push_back(std::to_string(task.retries));
     }
     if (!task.files.empty()) append_inputs(request.fields, task.files);
     request.fields.insert(request.fields.end(), task.arguments.begin(), task.arguments.end());
     net::encode(request);
-    net::encode(assignment("job-18446744073709551615", task.timeout, task.arguments, task.files, 4));
+    const Resources maximum{1048576, std::numeric_limits<std::uint64_t>::max()};
+    net::encode(assignment("job-18446744073709551615", task.timeout, task.arguments, task.files, 4, &maximum));
     return request;
 }
 struct Attempt {
@@ -144,6 +152,7 @@ struct Job {
     Clock::time_point queued_at{}, dispatch_started{}, dispatch_finished{}, completed_at{};
     std::optional<std::array<std::uint64_t, 4>> worker_phases;
     std::uint32_t retries = 0;
+    bool enforce_limits = false;
     std::vector<Attempt> attempts;
     Message completion{Type::error, {"job unfinished"}};
     bool terminal = false;
@@ -162,6 +171,7 @@ struct Record {
     bool profiling = false;
     bool attempts = false;
     bool cancellable = false;
+    bool cgroup_limits = false;
 };
 struct Registry {
     std::mutex mutex;
@@ -243,6 +253,7 @@ void schedule(Registry& registry) {
                 c[5] == "1", record.connected && !record.job &&
                     (job->files.empty() || record.staging) &&
                     (job->retries == 0 || record.attempts) &&
+                    (!job->enforce_limits || record.cgroup_limits) &&
                     Clock::now() - record.last_seen < std::chrono::seconds(1)});
         }
         auto selected = select_worker(candidates, job->requirements);
@@ -270,12 +281,14 @@ void submit(net::Connection& connection, Registry& registry, const Message& mess
         throw std::runtime_error("invalid job resource request or timeout");
     std::size_t argument_offset = 5;
     auto job = std::make_shared<Job>();
-    if (message.type == Type::retry_submit || message.type == Type::retry_staged_submit) {
+    job->enforce_limits = message.type == Type::limited_submit || message.type == Type::limited_staged_submit;
+    if (job->enforce_limits && memory == 0) throw std::runtime_error("enforced jobs require a positive memory byte limit");
+    if (message.type == Type::retry_submit || message.type == Type::retry_staged_submit || job->enforce_limits) {
         const auto retries = number(fields[argument_offset++]);
-        if (retries == 0 || retries > 3) throw std::runtime_error("retry count must be between 1 and 3");
+        if ((!job->enforce_limits && retries == 0) || retries > 3) throw std::runtime_error("invalid retry count");
         job->retries = static_cast<std::uint32_t>(retries);
     }
-    if (message.type == Type::staged_submit || message.type == Type::retry_staged_submit)
+    if (message.type == Type::staged_submit || message.type == Type::retry_staged_submit || message.type == Type::limited_staged_submit)
         job->files = parse_inputs(fields, argument_offset);
     if (argument_offset >= fields.size() || fields.size() - argument_offset > 128 || fields[argument_offset].empty())
         throw std::runtime_error("invalid submission arguments");
@@ -284,7 +297,8 @@ void submit(net::Connection& connection, Registry& registry, const Message& mess
     job->requirements = {fields[3], fields[4], {static_cast<std::uint32_t>(cpu), memory}, false};
     job->timeout = static_cast<std::uint32_t>(timeout);
     job->arguments.assign(fields.begin() + static_cast<std::ptrdiff_t>(argument_offset), fields.end());
-    net::encode(assignment("job-18446744073709551615", job->timeout, job->arguments, job->files, 4));
+    const Resources maximum{1048576, std::numeric_limits<std::uint64_t>::max()};
+    net::encode(assignment("job-18446744073709551615", job->timeout, job->arguments, job->files, 4, &maximum));
     {
         std::unique_lock lock(registry.mutex);
         if (registry.jobs.size() >= 128) throw std::runtime_error("job queue full");
@@ -316,13 +330,14 @@ void submit(net::Connection& connection, Registry& registry, const Message& mess
         registry.history.push_back(job);
         if (registry.history.size() > 64) registry.history.pop_front();
     }
-    if (job->retries != 0 && job->completion.type == Type::error)
+    if ((job->retries != 0 || job->enforce_limits) && job->completion.type == Type::error)
         net::send(connection, {Type::job_error, {job->id, job->completion.fields[0]}});
     else net::send(connection, job->completion);
 }
-Message snapshot(Registry& registry, bool capabilities = false, bool retries = false) {
+Message snapshot(Registry& registry, bool capabilities = false, bool retries = false, bool resources = false) {
     std::lock_guard lock(registry.mutex);
-    Message result{retries ? Type::retry_capability_snapshot : capabilities ? Type::capability_snapshot : Type::snapshot, {}};
+    Message result{resources ? Type::resource_snapshot : retries ? Type::retry_capability_snapshot :
+        capabilities ? Type::capability_snapshot : Type::snapshot, {}};
     for (const auto& [id, record] : registry.workers) {
         const auto age = Clock::now() - record.last_seen;
         const std::string state = !record.connected || age >= std::chrono::seconds(2) ? "DEAD" :
@@ -331,6 +346,7 @@ Message snapshot(Registry& registry, bool capabilities = false, bool retries = f
         result.fields.push_back(capabilities && state == "READY" && record.job ? "BUSY" : state);
         if (capabilities) result.fields.push_back(record.staging ? "staging-v1" : "");
         if (retries) result.fields.push_back(record.attempts ? "attempt-v1" : "");
+        if (resources) result.fields.push_back(record.cgroup_limits ? "cgroup2-v1" : "");
     }
     return result;
 }
@@ -450,8 +466,10 @@ void handle(net::Socket peer, Registry& registry, const std::string& token, cons
             net::send(socket, snapshot(registry));
             return;
         }
-        if ((message.type == Type::worker_capabilities || message.type == Type::retry_capabilities) && message.fields.empty()) {
-            net::send(socket, snapshot(registry, true, message.type == Type::retry_capabilities));
+        if ((message.type == Type::worker_capabilities || message.type == Type::retry_capabilities ||
+             message.type == Type::resource_capabilities) && message.fields.empty()) {
+            net::send(socket, snapshot(registry, true, message.type != Type::worker_capabilities,
+                                       message.type == Type::resource_capabilities));
             return;
         }
         if (message.type == Type::jobs || message.type == Type::logs || message.type == Type::timings || message.type == Type::attempts) {
@@ -463,19 +481,21 @@ void handle(net::Socket peer, Registry& registry, const std::string& token, cons
             return;
         }
         if (message.type == Type::submit || message.type == Type::staged_submit ||
-            message.type == Type::retry_submit || message.type == Type::retry_staged_submit) {
+            message.type == Type::retry_submit || message.type == Type::retry_staged_submit ||
+            message.type == Type::limited_submit || message.type == Type::limited_staged_submit) {
             submit(socket, registry, message);
             return;
         }
         if (message.type != Type::register_worker ||
-            message.fields.size() < 6 || message.fields.size() > 11)
+            message.fields.size() < 6 || message.fields.size() > 12)
             throw std::runtime_error("expected registration or cluster request");
         const auto& f = message.fields;
         if (!label(f[0]) || !label(f[1]) || !label(f[2]) ||
             number(f[3]) == 0 || number(f[3]) > 1048576 || number(f[4]) == 0 ||
             (f[5] != "0" && f[5] != "1") || (f.size() >= 7 && f[6] != "staging-v1") ||
             (f.size() >= 8 && f[7] != "longpoll-v1") || (f.size() >= 9 && f[8] != "timing-v1") ||
-            (f.size() >= 10 && f[9] != "attempt-v1") || (f.size() == 11 && f[10] != "cancel-v1"))
+            (f.size() >= 10 && f[9] != "attempt-v1") || (f.size() >= 11 && f[10] != "cancel-v1") ||
+            (f.size() == 12 && f[11] != "cgroup2-v1"))
             throw std::runtime_error("invalid worker capabilities");
         {
             std::lock_guard lock(registry.mutex);
@@ -488,7 +508,7 @@ void handle(net::Socket peer, Registry& registry, const std::string& token, cons
                 throw std::runtime_error("worker registry full");
             registry.workers.insert_or_assign(f[0], Record{
                 std::vector<std::string>(f.begin(), f.begin() + 6), Clock::now(), true, nullptr, {0, 0},
-                f.size() >= 7, f.size() >= 8, f.size() >= 9, f.size() >= 10, f.size() == 11});
+                f.size() >= 7, f.size() >= 8, f.size() >= 9, f.size() >= 10, f.size() >= 11, f.size() == 12});
             registered = f[0];
         }
         net::send(socket, {Type::ok, {}});
@@ -543,7 +563,8 @@ void handle(net::Socket peer, Registry& registry, const std::string& token, cons
                 if (!stopped && message.type == Type::heartbeat && record.job && record.job->state == "ASSIGNED") {
                     auto& job = *record.job;
                     reply = assignment(job.id, job.timeout, job.arguments, job.files,
-                                       record.attempts ? job.attempts.back().number : 0);
+                                       record.attempts ? job.attempts.back().number : 0,
+                                       record.cgroup_limits ? &job.requirements.resources : nullptr);
                     job.state = "RUNNING";
                     job.attempts.back().state = "RUNNING";
                     dispatched = record.job;
@@ -595,16 +616,27 @@ std::uint64_t microseconds(Clock::time_point begin, Clock::time_point end) {
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
 }
 WorkerOutcome perform(const std::vector<std::string>& arguments, const std::vector<InputFile>& files,
-                      std::uint32_t timeout, const std::atomic<bool>& cancel, Clock::time_point received) {
+                      std::uint32_t timeout, const std::atomic<bool>& cancel, Clock::time_point received,
+                      const CgroupRoot* root, Resources limits) {
     WorkerOutcome outcome;
     std::optional<Workspace> workspace;
+    std::optional<CgroupJob> group;
     Clock::time_point execution_started{};
     try {
+        if (root) group.emplace(*root, limits);
         if (!files.empty()) workspace.emplace(files);
         execution_started = Clock::now();
         outcome.phases[0] = microseconds(received, execution_started);
-        outcome.result = execute(arguments, timeout, cancel, workspace ? workspace->path() : "");
+        outcome.result = execute(arguments, timeout, cancel, workspace ? workspace->path() : "", group ? &*group : nullptr);
         outcome.phases[1] = microseconds(execution_started, Clock::now());
+        if (group && group->oom_killed()) {
+            const std::string diagnostic = "\n[forge] job cgroup reports an OOM kill\n";
+            const auto room = 16384 - outcome.result.error.size();
+            outcome.result.error.append(diagnostic, 0, room);
+            if (diagnostic.size() > room) outcome.result.truncated = true;
+        }
+    } catch (const ResourceCleanupError&) {
+        throw;
     } catch (const std::exception& error) {
         const auto failed_at = Clock::now();
         if (execution_started == Clock::time_point{}) outcome.phases[0] = microseconds(received, failed_at);
@@ -613,6 +645,7 @@ WorkerOutcome perform(const std::vector<std::string>& arguments, const std::vect
         outcome.result.error = std::string("worker execution setup failed: ") + error.what();
     }
     const auto cleanup_started = Clock::now();
+    if (group) group->cleanup();
     workspace.reset();
     outcome.completed_at = Clock::now();
     outcome.phases[2] = microseconds(cleanup_started, outcome.completed_at);
@@ -659,19 +692,20 @@ int coordinator(std::uint16_t port, const std::string& bind) {
     return 0;
 }
 
-int join(std::uint16_t port, const std::string& id, const std::string& host) {
+int join(std::uint16_t port, const std::string& id, const std::string& host, const std::string& cgroup_root) {
     if (!label(id)) throw std::runtime_error("worker ID must be 1-64 letters, digits, dots, underscores or hyphens");
     install_signals();
     utsname system{};
-    struct sysinfo memory{};
-    const auto cpus = ::sysconf(_SC_NPROCESSORS_ONLN);
-    if (::uname(&system) != 0 || ::sysinfo(&memory) != 0 || cpus <= 0)
+    std::optional<CgroupRoot> resource_root;
+    if (!cgroup_root.empty()) resource_root.emplace(cgroup_root);
+    const auto capacity = resource_capacity(cgroup_root);
+    if (::uname(&system) != 0)
         throw std::runtime_error("capability discovery failed");
     auto socket = connect_coordinator(port, host);
-    net::send(socket, {Type::register_worker,
-        {id, "linux", system.machine, std::to_string(cpus),
-         std::to_string(static_cast<std::uint64_t>(memory.totalram) * memory.mem_unit), "0",
-         "staging-v1", "longpoll-v1", "timing-v1", "attempt-v1", "cancel-v1"}});
+    Message registration{Type::register_worker, {id, "linux", system.machine, std::to_string(capacity.cpu),
+        std::to_string(capacity.memory_bytes), "0", "staging-v1", "longpoll-v1", "timing-v1", "attempt-v1", "cancel-v1"}};
+    if (resource_root) registration.fields.push_back("cgroup2-v1");
+    net::send(socket, registration);
     expect_ok(net::receive(socket));
     std::cout << "Worker " << id << " registered" << std::endl;
     std::atomic<bool> cancel{false};
@@ -694,6 +728,7 @@ int join(std::uint16_t port, const std::string& id, const std::string& host) {
         if (finished) {
             WorkerOutcome outcome;
             try { outcome = execution.get(); }
+            catch (const ResourceCleanupError&) { throw; }
             catch (const std::exception& error) {
                 outcome.result.exit_code = 125;
                 outcome.result.error = std::string("worker execution setup failed: ") + error.what();
@@ -721,18 +756,31 @@ int join(std::uint16_t port, const std::string& id, const std::string& host) {
                 number(response.fields[1]) != attempt)
                 throw std::runtime_error("invalid cancellation attempt");
             cancel = true;
-        } else if (response.type == Type::attempt_assignment || response.type == Type::attempt_staged_assignment) {
+        } else if (response.type == Type::attempt_assignment || response.type == Type::attempt_staged_assignment ||
+                   response.type == Type::limited_assignment || response.type == Type::limited_staged_assignment) {
+            const bool limited = response.type == Type::limited_assignment || response.type == Type::limited_staged_assignment;
+            if (limited != resource_root.has_value()) throw std::runtime_error("assignment resource enforcement capability mismatch");
             if (response.fields.size() < 4 || number(response.fields[1]) == 0 || number(response.fields[1]) > 4)
                 throw std::runtime_error("invalid execution attempt");
             attempt = static_cast<std::uint32_t>(number(response.fields[1]));
             response.fields.erase(response.fields.begin() + 1);
-            response.type = response.type == Type::attempt_assignment ? Type::assignment : Type::staged_assignment;
+            response.type = response.type == Type::attempt_assignment || response.type == Type::limited_assignment ?
+                Type::assignment : Type::staged_assignment;
             if (execution.valid() || response.fields.size() < 3 ||
                 !label(response.fields[0])) throw std::runtime_error("invalid assignment");
             const auto timeout = number(response.fields[1]);
             if (timeout == 0 || timeout > 30) throw std::runtime_error("invalid execution timeout");
             job_id = response.fields[0];
             std::size_t offset = 2;
+            Resources limits;
+            if (limited) {
+                if (response.fields.size() < 5) throw std::runtime_error("missing assignment limits");
+                const auto cpu = number(response.fields[offset++]);
+                limits.memory_bytes = number(response.fields[offset++]);
+                if (cpu == 0 || cpu > capacity.cpu || limits.memory_bytes > capacity.memory_bytes)
+                    throw std::runtime_error("assignment exceeds worker capacity");
+                limits.cpu = static_cast<std::uint32_t>(cpu);
+            }
             std::vector<InputFile> files;
             if (response.type == Type::staged_assignment) files = parse_inputs(response.fields, offset);
             if (offset >= response.fields.size() || response.fields.size() - offset > 128 || response.fields[offset].empty())
@@ -741,24 +789,25 @@ int join(std::uint16_t port, const std::string& id, const std::string& host) {
             cancel = false;
             { std::lock_guard lock(completed.mutex); completed.ready = false; }
             execution = std::async(std::launch::async, [arguments = std::move(arguments), files = std::move(files), timeout,
-                                                     received_at, &cancel, &completed] {
+                                                     received_at, limits, root = resource_root ? &*resource_root : nullptr, &cancel, &completed] {
                 struct Notify { CompletionNotice& notice; ~Notify() { notice.signal(); } } notify{completed};
-                return perform(arguments, files, static_cast<std::uint32_t>(timeout), cancel, received_at);
+                return perform(arguments, files, static_cast<std::uint32_t>(timeout), cancel, received_at, root, limits);
             });
         } else expect_ok(response);
     }
     return 0;
 }
 
-int cluster(std::uint16_t port, const std::string& host) {
+int cluster(std::uint16_t port, const std::string& host, bool details) {
     auto socket = connect_coordinator(port, host);
-    net::send(socket, {Type::cluster, {}});
+    net::send(socket, {details ? Type::resource_capabilities : Type::cluster, {}});
     auto result = net::receive(socket);
-    if (result.type != Type::snapshot || result.fields.size() % 7 != 0)
+    const auto width = details ? 10u : 7u;
+    if (result.type != (details ? Type::resource_snapshot : Type::snapshot) || result.fields.size() % width != 0)
         throw std::runtime_error("invalid cluster snapshot");
-    std::cout << "ID\tOS\tARCH\tCPU\tRAM_BYTES\tCUDA\tSTATE\n";
+    std::cout << "ID\tOS\tARCH\tCPU\tRAM_BYTES\tCUDA\tSTATE" << (details ? "\tSTAGING\tATTEMPTS\tLIMITS\n" : "\n");
     for (std::size_t i = 0; i < result.fields.size(); ++i)
-        std::cout << result.fields[i] << ((i + 1) % 7 == 0 ? '\n' : '\t');
+        std::cout << result.fields[i] << ((i + 1) % width == 0 ? '\n' : '\t');
     return 0;
 }
 
@@ -856,7 +905,7 @@ TaskResult submit_task(std::uint16_t port, const std::string& host, const TaskRe
     const auto result = net::receive(socket, std::chrono::seconds(45 * (task.retries + 1)));
     if (result.type == Type::error && result.fields.size() == 1)
         return {{}, 1, {}, result.fields[0], false, false, true};
-    if (task.retries != 0 && result.type == Type::job_error && result.fields.size() == 2 && label(result.fields[0]))
+    if ((task.retries != 0 || task.enforce_limits) && result.type == Type::job_error && result.fields.size() == 2 && label(result.fields[0]))
         return {result.fields[0], 1, {}, result.fields[1], false, false, true};
     const auto& fields = result.fields;
     if (result.type == Type::cancelled_result && fields.size() == 7 && label(fields[0]) &&
@@ -874,10 +923,11 @@ std::size_t staging_worker_count(std::uint16_t port, const std::string& host, co
     const auto architecture = target_architecture(task.architecture);
     auto socket = connect_coordinator(port, host);
     const bool retries = task.retries != 0;
-    net::send(socket, {retries ? Type::retry_capabilities : Type::worker_capabilities, {}});
+    const bool limits = task.enforce_limits;
+    net::send(socket, {limits ? Type::resource_capabilities : retries ? Type::retry_capabilities : Type::worker_capabilities, {}});
     const auto response = net::receive(socket);
-    const std::size_t width = retries ? 9 : 8;
-    if (response.type != (retries ? Type::retry_capability_snapshot : Type::capability_snapshot) ||
+    const std::size_t width = limits ? 10 : retries ? 9 : 8;
+    if (response.type != (limits ? Type::resource_snapshot : retries ? Type::retry_capability_snapshot : Type::capability_snapshot) ||
         response.fields.size() % width != 0)
         throw std::runtime_error("coordinator does not support requested worker capability discovery");
     std::size_t count = 0;
@@ -887,7 +937,8 @@ std::size_t staging_worker_count(std::uint16_t port, const std::string& host, co
         if (cpu == 0 || cpu > 1048576) throw std::runtime_error("invalid worker CPU capacity");
         Worker worker{f[i], f[i + 1], f[i + 2],
             {static_cast<std::uint32_t>(cpu), number(f[i + 4])}, {0, 0}, f[i + 5] == "1",
-            f[i + 6] == "READY" && f[i + 7] == "staging-v1" && (!retries || f[i + 8] == "attempt-v1")};
+            f[i + 6] == "READY" && f[i + 7] == "staging-v1" && (!retries || f[i + 8] == "attempt-v1") &&
+            (!limits || f[i + 9] == "cgroup2-v1")};
         if (!rejection(worker, {"linux", architecture, {task.cpu, task.memory}, false})) ++count;
     }
     return count;

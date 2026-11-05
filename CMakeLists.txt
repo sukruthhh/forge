@@ -19,7 +19,7 @@ check_cxx_symbol_exists(posix_spawn_file_actions_addchdir_np "spawn.h" FORGE_HAS
 if(NOT FORGE_HAS_SPAWN_CHDIR)
   message(FATAL_ERROR "Forge staging requires a Linux libc with posix_spawn_file_actions_addchdir_np.")
 endif()
-add_library(forge_network src/network.cpp src/runtime.cpp src/executor.cpp src/workload.cpp src/batch.cpp)
+add_library(forge_network src/network.cpp src/runtime.cpp src/executor.cpp src/workload.cpp src/batch.cpp src/resources.cpp)
 target_link_libraries(forge_network PUBLIC forge_core Threads::Threads OpenSSL::SSL)
 target_compile_options(forge_network PRIVATE -Wall -Wextra -Wpedantic -Werror)
 add_executable(forge src/cli.cpp)
@@ -36,6 +36,9 @@ if(BUILD_TESTING)
   add_executable(executor_tests tests/executor_tests.cpp)
   target_link_libraries(executor_tests PRIVATE forge_network)
   add_test(NAME executor COMMAND executor_tests)
+  add_executable(resource_tests tests/resource_tests.cpp)
+  target_link_libraries(resource_tests PRIVATE forge_network)
+  add_test(NAME resources COMMAND resource_tests)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME network_integration COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/network_integration.py $<TARGET_FILE:forge>)
@@ -55,6 +58,9 @@ if(BUILD_TESTING)
   add_test(NAME cancellation_integration COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cancellation_integration.py $<TARGET_FILE:forge>)
   set_tests_properties(cancellation_integration PROPERTIES TIMEOUT 90)
+  add_test(NAME resource_integration COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/resource_integration.py $<TARGET_FILE:forge>)
+  set_tests_properties(resource_integration PROPERTIES TIMEOUT 45)
   add_test(NAME authentication_integration COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/authentication_integration.py $<TARGET_FILE:forge>)
   set_tests_properties(authentication_integration PROPERTIES TIMEOUT 45)

@@ -5,6 +5,7 @@
 #include <vector>
 
 namespace forge {
+class CgroupJob;
 struct ExecutionResult {
     int exit_code = 1;
     std::string output;
@@ -16,5 +17,5 @@ struct ExecutionResult {
 // applies to the process group, including descendants keeping output pipes open.
 ExecutionResult execute(const std::vector<std::string>& arguments,
                         std::uint32_t timeout_seconds, const std::atomic<bool>& stop,
-                        const std::string& working_directory = {});
+                        const std::string& working_directory = {}, const CgroupJob* group = nullptr);
 }

@@ -77,7 +77,9 @@ try:
         (21, ["1", "0", "1", "linux", "x86_64", "1", "/bin/true"]),
         (22, ["1", "0", "1", "linux", "x86_64", "1", "1", "f", "0", "data", "/bin/true"]), (13, []),
         (14, ["1", "0", "1", "linux", "", "1", "input", "0", "data", "/bin/true"]),
-        (16, []),
+        (16, []), (39, []),
+        (37, ["1", "33554432", "1", "linux", "", "0", "/bin/true"]),
+        (38, ["1", "33554432", "1", "linux", "", "0", "1", "f", "0", "data", "/bin/true"]),
         (13, [token, "extra"]), (13, ["x" * len(token)]),
     ):
         with socket.create_connection(("127.0.0.1", port), timeout=4) as sock:

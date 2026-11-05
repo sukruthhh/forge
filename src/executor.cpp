@@ -1,5 +1,6 @@
 #include "forge/executor.hpp"
 #include "forge/network.hpp"
+#include "forge/resources.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -47,9 +48,11 @@ struct SpawnConfig {
 };
 struct Child {
     pid_t pid;
+    const CgroupJob* group = nullptr;
     bool reaped = false;
     ~Child() {
         if (!reaped) {
+            if (group) try { group->kill(); } catch (...) {}
             ::kill(-pid, SIGKILL);
             while (::waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {}
         }
@@ -79,17 +82,21 @@ bool drain(int fd, std::string& destination, bool& truncated) {
 
 ExecutionResult execute(const std::vector<std::string>& arguments,
                         std::uint32_t timeout_seconds, const std::atomic<bool>& stop,
-                        const std::string& working_directory) {
+                        const std::string& working_directory, const CgroupJob* group) {
     if (arguments.empty() || arguments.front().empty() || timeout_seconds == 0 || timeout_seconds > 30)
         throw std::runtime_error("invalid execution request");
+    std::vector<std::string> launch = group ? std::vector<std::string>{"/proc/self/exe", "__cgroup-exec", "3", "--"} : std::vector<std::string>{};
+    launch.insert(launch.end(), arguments.begin(), arguments.end());
     std::vector<char*> argv;
-    for (const auto& argument : arguments) {
+    for (const auto& argument : launch) {
         if (argument.find('\0') != std::string::npos) throw std::runtime_error("NUL in argument");
         argv.push_back(const_cast<char*>(argument.c_str()));
     }
     argv.push_back(nullptr);
     Pipe out;
     Pipe err;
+    net::Socket group_descriptor(group ? ::fcntl(group->descriptor(), F_DUPFD_CLOEXEC, 10) : -1);
+    if (group && group_descriptor.get() < 0) throw std::runtime_error("cannot duplicate cgroup descriptor");
     SpawnConfig config;
     if (!working_directory.empty())
         checked(::posix_spawn_file_actions_addchdir_np(&config.actions, working_directory.c_str()));
@@ -102,6 +109,7 @@ ExecutionResult execute(const std::vector<std::string>& arguments,
     checked(::posix_spawnattr_setsigdefault(&config.attributes, &defaults));
     checked(::posix_spawnattr_setflags(&config.attributes, POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGDEF));
     checked(::posix_spawnattr_setpgroup(&config.attributes, 0));
+    if (group) checked(::posix_spawn_file_actions_adddup2(&config.actions, group_descriptor.get(), 3));
     ExecutionResult result;
     if (stop.load()) {
         result.exit_code = 130;
@@ -114,7 +122,7 @@ ExecutionResult execute(const std::vector<std::string>& arguments,
         result.error = std::string("cannot execute: ") + std::strerror(error) + '\n';
         return result;
     }
-    Child child{pid};
+    Child child{pid, group};
     out.write = net::Socket();
     err.write = net::Socket();
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout_seconds);
@@ -124,6 +132,7 @@ ExecutionResult execute(const std::vector<std::string>& arguments,
     while (!exited || out_open || err_open) {
         if (stop.load() || std::chrono::steady_clock::now() >= deadline) {
             result.timed_out = !stop.load();
+            if (group) group->kill();
             ::kill(-pid, SIGKILL);
             while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
             child.reaped = true;
@@ -147,6 +156,7 @@ ExecutionResult execute(const std::vector<std::string>& arguments,
             else if (errno != EINTR) throw std::runtime_error("waitid failed");
         }
     }
+    if (group) group->kill();
     ::kill(-pid, SIGKILL);
     while (::waitpid(pid, &status, 0) < 0) {
         if (errno != EINTR) throw std::runtime_error("waitpid failed");
