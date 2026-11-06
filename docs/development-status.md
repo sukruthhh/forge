@@ -109,8 +109,14 @@ hashes, unique input values, worker IDs and attempt history checked. The laptop
 also submitted a hostname command executed by the PC. Transport was Forge mutual
 TLS inside a key-authenticated SSH tunnel, not direct LAN TLS. See the
 [raw correctness evidence and limitations](validation/2026-11-05-physical-001/README.md).
-Physical workload performance, recovery-time measurements and onboarding evidence
-remain pending. Neither worker used the optional cgroup backend in that test.
+The first [physical synthetic experiment](../benchmarks/results/2026-11-05-physical-001/README.md)
+now records median eight-task time of 4.5552 seconds across PC/laptop, versus
+5.4479 seconds for direct PC sequential and 2.7181 seconds for direct PC parallel
+execution. A separate PC-only Forge reference took 5.3034 seconds. All 240
+executions across both experiments validated. The cluster was slower than the
+stronger local-parallel baseline. Representative workload performance, recovery-time
+measurements and onboarding evidence remain pending. Neither physical worker used
+the optional cgroup backend in those tests.
 The Mac needs an ARM64 Linux VM; on November 3 the user deferred that setup and
 asked to continue code development. Bring it up when physical-machine validation
 resumes; it is not a completed test or an automatically scheduled reminder.

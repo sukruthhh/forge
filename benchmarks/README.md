@@ -207,3 +207,11 @@ dispatch and completion notifications, two-worker median four-task time fell
 75.81% (2.0432 s to 0.4943 s), approximately matching direct local parallel
 execution (0.5075 s). All 144 executions including warmups and baselines passed.
 This remains one shared Docker host and a short synthetic workload.
+
+The [initial physical-cluster experiment](results/2026-11-05-physical-001/README.md)
+records PC/laptop WSL2 execution over mutual TLS inside SSH. Median eight-task
+batch time was 4.5552 seconds versus 5.4479 sequentially on the PC and 2.7181
+with two direct PC processes. A separate one-PC-worker reference was 5.3034
+seconds. All 240 executions across both invocations validated; the stronger
+local-parallel baseline outperformed the cluster. This remains synthetic work,
+with heterogeneous hardware/Python versions and uncontrolled host load.

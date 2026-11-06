@@ -32,7 +32,8 @@ programmable compute cluster.
 > sessions. I then added mutual TLS and explicit IPv4 endpoints, with network tests
 > across separate containers. Bounded worker-loss retries and cancellation are
 > implemented. Initial staged execution is verified on separate PC/laptop WSL2
-> workers over mutual TLS inside SSH; physical performance and recovery tests remain open.
+> workers over mutual TLS inside SSH. Synthetic performance is measured;
+> representative workloads and physical recovery measurements remain open.
 > Bounded file staging and map now distribute independent inputs and save per-task
 > results. Visible affinity/cgroup discovery and delegated CPU/RAM enforcement
 > are implemented; larger packaging and namespace isolation remain open.
@@ -76,7 +77,8 @@ motivation in your own words rather than presenting this document as a script.
 | cgroups v2 | Delegated CPU/RAM enforcement, confined startup probe and cgroup-wide cleanup; real-kernel fixture |
 | Namespace isolation | Planned |
 | Native macOS workers and CUDA placement | Planned; current matching only checks a supplied CUDA boolean |
-| Physical-machine benchmarks and external users | No results or user evidence yet |
+| Physical-machine benchmarks | Initial PC/laptop synthetic benchmark published; 4.5552-s batch versus PC sequential 5.4479 s and parallel 2.7181 s; representative workload and recovery measurements remain open |
+| External users | No adoption or independent onboarding evidence yet |
 | Initial physical-machine execution | Two staged jobs succeeded on distinct PC/laptop Ubuntu WSL2 workers; mutual TLS inside SSH, verified input hashes and accepted attempt history |
 
 **Validation record, October 31:** GCC 13.3 Linux Debug build succeeded in the
