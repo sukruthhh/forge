@@ -138,9 +138,13 @@ capped exponential backoff and jitter, fresh capacity/credential discovery, and
 no old-result replay. Local configuration, authentication/protocol rejection and
 resource-cleanup failures remain fatal. Local validation passed seventeen suites
 in Release and Debug, with final targeted reconnect checks afterward, the private
-mutual-TLS bridge, and real-kernel cleanup checks with both binaries. Physical
-deployment of this flag and user-outcome measurements remain separate; older
-benchmark results still describe their recorded runtime revisions.
+mutual-TLS bridge, and real-kernel cleanup checks with both binaries. Subsequent
+[physical reconnect verification](validation/2026-11-06-reconnect-001/README.md)
+confirmed the same laptop worker process rejoined after one idle coordinator
+restart and ran a fresh job. PID, process start identity and binary hash matched
+before/after. This is correctness evidence, not a latency distribution or durable
+restart recovery. User-outcome measurements remain separate; older benchmark
+results still describe their recorded runtime revisions.
 
 The [November 6 simulation experiment](../benchmarks/results/2026-11-06-simulation-001/README.md)
 now validates 240 executions across completed physical and PC-only comparisons.

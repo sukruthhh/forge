@@ -1,0 +1,8 @@
+[forge] worker session ended: connect: Connection refused; reconnecting in 5066 ms
+[forge] worker session ended: connect: Connection refused; reconnecting in 5066 ms
+[forge] worker session ended: connect: Connection refused; reconnecting in 5039 ms
+[forge] worker session ended: connect: Connection refused; reconnecting in 5023 ms
+[forge] worker session ended: connect: Connection refused; reconnecting in 5071 ms
+[forge] worker session ended: connect: Connection refused; reconnecting in 5028 ms
+[forge] worker session ended: connect: Connection refused; reconnecting in 5010 ms
+Worker laptop-native registered

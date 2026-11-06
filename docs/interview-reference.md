@@ -82,7 +82,7 @@ motivation in your own words rather than presenting this document as a script.
 | External users | No adoption or independent onboarding evidence; project-owner assisted setup observations are documented separately |
 | Numerical workload | Oscillator RK4 sweep with analytic checks; 240 executions validated in completed comparisons, cluster 2.0458 s versus PC sequential 2.8041 s and parallel 1.3767 s; generated model, not customer validation |
 | Initial physical-machine execution | Two staged jobs succeeded on distinct PC/laptop Ubuntu WSL2 workers; mutual TLS inside SSH, verified input hashes and accepted attempt history |
-| Worker transport reconnection | Opt-in capped backoff with fresh admission/capacity/TLS files, cleanup before readmission, no replay; automated tests, physical flag deployment still pending |
+| Worker transport reconnection | Opt-in capped backoff, fresh admission/capacity/TLS files and no replay; automated tests plus same-process laptop readmission across one idle coordinator restart |
 | Physical-host worker-process crash recovery | Five PC worker SIGKILL trials completed on the laptop on attempt 2; inspection includes polling delay, workload sleeps eight seconds, old-child cleanup performed by fixture |
 
 **Validation record, October 31:** GCC 13.3 Linux Debug build succeeded in the
@@ -907,3 +907,11 @@ TLS transport loss and certificate-file rotation. The real-kernel fixture confir
 failed cgroup cleanup remains fatal even when it coincides with transport loss.
 Older physical performance reports were not remeasured for this runtime change.
 Details and limits: [worker-reconnect.md](worker-reconnect.md).
+
+Physical follow-up verified the updated laptop worker through one idle coordinator
+restart. PID 1607, process start ticks and its binary hash matched before/after;
+two different probe nonces returned successfully. The new coordinator restarted
+job numbering, demonstrating that reconnection is not persistent job history.
+The owner also observed the existing retry loop register after SSH was manually
+restored. One raw readiness interval is diagnostic only, not a resume latency
+claim or reliability rate. See [physical reconnect evidence](validation/2026-11-06-reconnect-001/README.md).

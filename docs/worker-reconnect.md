@@ -10,6 +10,21 @@ The flag keeps the same worker process trying to establish a fresh session after
 connection refusal, disconnect or I/O deadline expiry. It does not restart a dead
 worker process, repair an SSH tunnel, persist coordinator state or enable job retries.
 
+## Reading the worker terminal
+
+| Output | Meaning |
+|---|---|
+| Worker NAME registered | Admission succeeded; leave the process running |
+| worker session ended ... reconnecting in N ms | The process is alive but disconnected; it is waiting before another attempt |
+| connect: Connection refused with a localhost tunnel endpoint | Nothing accepted that local connection; check that the SSH tunnel is running |
+| Your shell prompt returns | The worker stopped; read the preceding error |
+
+An idle connected worker may be silent. Repeated reconnect messages are not build
+progress or successful cluster membership. Check forge cluster from a separately
+configured terminal for READY/BUSY state. With an SSH tunnel, restore that tunnel
+without stopping the reconnecting worker; it can register when the endpoint is
+available again. Never regenerate keys merely because a connection was refused.
+
 ## Backoff and admission
 
 Retries sleep for 250, 500, 1000, 2000, 4000, then at most 5000 milliseconds, plus
@@ -98,3 +113,10 @@ Debug/Release regression suites and the mutual-TLS bridge protect existing behav
 These automated checks are not measurements of real-network reconnect latency.
 The earlier PC/laptop experiments used older workers without this flag; do not
 retroactively describe their manual restart as automatic recovery.
+
+Subsequent [physical verification](validation/2026-11-06-reconnect-001/README.md)
+confirmed that the updated laptop worker retained the same PID, process start
+identity and executable hash across one idle coordinator restart, then executed
+a fresh job. The owner also supplied a retry-to-registration log after manually
+restoring SSH. Neither establishes a reconnect latency distribution, active-job
+durability or long-term availability.

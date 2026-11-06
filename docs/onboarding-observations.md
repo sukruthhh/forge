@@ -13,7 +13,7 @@ No setup-time reduction, satisfaction score or general success rate was measured
 | Temporary SSH host key disappeared | Restarting the environment lost the ephemeral key, causing a legitimate host-identification warning | Persistent root-owned test host key and explicit fingerprint verification; never suppress host checks |
 | Foreground tunnel state was unclear | Silent ssh -N behavior and passphrase prompts required explanation; cluster checks exposed missing listeners | A clear readiness check and first-run troubleshooting flow |
 | Environment was terminal-specific | TLS variables had to be configured in the second Ubuntu terminal | Document scope or provide an explicit supported configuration mechanism |
-| Idle worker exited on an I/O deadline | Laptop terminal showed registration followed by I/O deadline exceeded; registry showed DEAD and a benchmark rejected the fleet | Implemented opt-in --reconnect with backoff and cleanup/admission tests; physical deployment verification remains separate |
+| Idle worker exited on an I/O deadline | Laptop terminal showed registration followed by I/O deadline exceeded; registry showed DEAD and a benchmark rejected the fleet | Implemented opt-in --reconnect; same laptop process rejoined one restarted coordinator, with fresh jobs verified; independent usability retest remains open |
 
 The underlying cause of the laptop I/O stall was not isolated. The SSH connection
 remained present; that does not prove the worker's application connection is live.

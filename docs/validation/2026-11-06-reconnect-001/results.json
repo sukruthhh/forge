@@ -1,0 +1,63 @@
+{
+  "started_utc": "2026-11-06T06:00:04.492902+00:00",
+  "runtime_source": "9e34fac12a60cbb5d2ad24d586a65aca8e96d57f",
+  "pc_binary_sha256": "149ccec7599e00a84403ea10044540a97f1b0693274edbc0f9c2569616492974",
+  "scope": "One idle coordinator restart; laptop worker over mutual TLS inside SSH; no active-job recovery or latency benchmark",
+  "passed": true,
+  "cluster_before": {
+    "returncode": 0,
+    "stdout": "ID\tOS\tARCH\tCPU\tRAM_BYTES\tCUDA\tSTATE\tSTAGING\tATTEMPTS\tLIMITS\ndesktop-native\tlinux\tx86_64\t28\t15518765056\t0\tREADY\tstaging-v1\tattempt-v1\t\nlaptop-native\tlinux\tx86_64\t8\t7191072768\t0\tREADY\tstaging-v1\tattempt-v1\t\n",
+    "stderr": ""
+  },
+  "before": {
+    "cli": {
+      "returncode": 0,
+      "stdout": "{\"nonce\": \"d3dbc714b60348b185316b2250db38e5\", \"host\": \"SukruthPC\", \"worker_pid\": 1607, \"worker_start_ticks\": \"8197977\", \"binary_sha256\": \"2a7adb04c63d82bed167ecee525348b8caee1313c829ce4062b1199204e76071\", \"worker_matches_installed_binary\": true, \"reconnect_enabled\": true, \"git_head\": \"9e34fac12a60cbb5d2ad24d586a65aca8e96d57f\", \"source_clean\": true, \"architecture\": \"x86_64\", \"kernel\": \"6.6.114.1-microsoft-standard-WSL2\", \"python\": \"3.14.4\"}\n",
+      "stderr": "[forge] job-111 exit=0\n"
+    },
+    "observed": {
+      "nonce": "d3dbc714b60348b185316b2250db38e5",
+      "host": "SukruthPC",
+      "worker_pid": 1607,
+      "worker_start_ticks": "8197977",
+      "binary_sha256": "2a7adb04c63d82bed167ecee525348b8caee1313c829ce4062b1199204e76071",
+      "worker_matches_installed_binary": true,
+      "reconnect_enabled": true,
+      "git_head": "9e34fac12a60cbb5d2ad24d586a65aca8e96d57f",
+      "source_clean": true,
+      "architecture": "x86_64",
+      "kernel": "6.6.114.1-microsoft-standard-WSL2",
+      "python": "3.14.4"
+    },
+    "expected_nonce": "d3dbc714b60348b185316b2250db38e5"
+  },
+  "intentional_outage_after_exit_seconds": 3,
+  "restart_to_first_ready_observation_seconds": 0.9813171890054946,
+  "after": {
+    "cli": {
+      "returncode": 0,
+      "stdout": "{\"nonce\": \"57f9aa3867604de988d549f1a9bf93f8\", \"host\": \"SukruthPC\", \"worker_pid\": 1607, \"worker_start_ticks\": \"8197977\", \"binary_sha256\": \"2a7adb04c63d82bed167ecee525348b8caee1313c829ce4062b1199204e76071\", \"worker_matches_installed_binary\": true, \"reconnect_enabled\": true, \"git_head\": \"9e34fac12a60cbb5d2ad24d586a65aca8e96d57f\", \"source_clean\": true, \"architecture\": \"x86_64\", \"kernel\": \"6.6.114.1-microsoft-standard-WSL2\", \"python\": \"3.14.4\"}\n",
+      "stderr": "[forge] job-1 exit=0\n"
+    },
+    "observed": {
+      "nonce": "57f9aa3867604de988d549f1a9bf93f8",
+      "host": "SukruthPC",
+      "worker_pid": 1607,
+      "worker_start_ticks": "8197977",
+      "binary_sha256": "2a7adb04c63d82bed167ecee525348b8caee1313c829ce4062b1199204e76071",
+      "worker_matches_installed_binary": true,
+      "reconnect_enabled": true,
+      "git_head": "9e34fac12a60cbb5d2ad24d586a65aca8e96d57f",
+      "source_clean": true,
+      "architecture": "x86_64",
+      "kernel": "6.6.114.1-microsoft-standard-WSL2",
+      "python": "3.14.4"
+    },
+    "expected_nonce": "57f9aa3867604de988d549f1a9bf93f8"
+  },
+  "cluster_after": {
+    "returncode": 0,
+    "stdout": "ID\tOS\tARCH\tCPU\tRAM_BYTES\tCUDA\tSTATE\tSTAGING\tATTEMPTS\tLIMITS\ndesktop-native\tlinux\tx86_64\t28\t15530659840\t0\tREADY\tstaging-v1\tattempt-v1\t\nlaptop-native\tlinux\tx86_64\t8\t7195672576\t0\tREADY\tstaging-v1\tattempt-v1\t\n",
+    "stderr": ""
+  }
+}
