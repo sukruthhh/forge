@@ -200,13 +200,16 @@ try:
             output = directory / 'results'
             result = subprocess.run([binary, 'map', '--port', str(port), '--jobs', '2', '--output', str(output),
                                      *inputs, '--', sys.executable, '-c',
-                                     'import pathlib, sys, time; time.sleep(.2); print(pathlib.Path(sys.argv[1]).read_text())', '{}'],
+                                     'import json, pathlib, sys, time; start=time.monotonic(); time.sleep(.6); '
+                                     'print(json.dumps(dict(value=pathlib.Path(sys.argv[1]).read_text(), start=start, end=time.monotonic())))', '{}'],
                                     capture_output=True, text=True, timeout=12)
             require(result.returncode == 0, 'concurrent staged map failed: ' + result.stderr)
             manifest = [json.loads(line) for line in (output / 'results.jsonl').read_text().splitlines()]
             require(len(manifest) == 4 and all(row['state'] == 'SUCCEEDED' for row in manifest), 'map results invalid')
-            require([(output / f'{i + 1:04}.stdout').read_text().strip() for i in range(4)] == list(map(str, range(4))),
-                    'concurrent staging mixed inputs')
+            observed = [json.loads((output / f'{i + 1:04}.stdout').read_text()) for i in range(4)]
+            require([row['value'] for row in observed] == list(map(str, range(4))), 'concurrent staging mixed inputs')
+            require(max(row['start'] for row in observed[2:]) < min(row['end'] for row in observed[2:]),
+                    'map did not refill both slots after its first pair')
 
             first, second = run('shutdown-a', 10), run('shutdown-b', 10)
             try:

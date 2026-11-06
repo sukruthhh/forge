@@ -26,9 +26,14 @@ def require(condition, message):
 
 
 def invoke(output, *arguments):
-    return subprocess.run([sys.executable, str(root / "benchmarks/run.py"), "--binary", binary,
+    result = subprocess.run([sys.executable, str(root / "benchmarks/run.py"), "--binary", binary,
                            "--output", str(output), "--environment-kind", "container", "--label", "CTest synthetic smoke",
                            "--purpose", "smoke", *arguments], capture_output=True, text=True, timeout=65)
+    journal = output / 'trials.jsonl'
+    if result.returncode and journal.exists():
+        failures = [row for line in journal.read_text().splitlines() if not (row := json.loads(line))['valid']]
+        result.stderr += '\nFailed trial diagnostics: ' + json.dumps(failures)
+    return result
 
 
 known = {0: 0, 1: 0, 2: 1, 3: 2, 10: 4, 100: 25, 1000: 168, 7919: 1000, 10000: 1229}

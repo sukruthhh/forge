@@ -585,6 +585,12 @@ void handle(net::Socket peer, Registry& registry, const std::string& token, cons
                 schedule(registry);
                 if (message.type == Type::heartbeat && record.long_poll && record.jobs.empty())
                     registry.changed.wait_for(lock, std::chrono::milliseconds(500), [&] { return stopped || !record.jobs.empty(); });
+                else if (message.type == Type::heartbeat && record.long_poll && record.jobs.size() < record.slots)
+                    registry.changed.wait_for(lock, std::chrono::milliseconds(25), [&] {
+                        return stopped || std::any_of(record.jobs.begin(), record.jobs.end(), [](const auto& entry) {
+                            return entry.second->state == "ASSIGNED" || entry.second->cancel_requested;
+                        });
+                    });
                 auto pending_cancel = record.jobs.end();
                 for (auto candidate = record.jobs.begin(); candidate != record.jobs.end(); ++candidate) {
                     if (candidate->second->cancel_requested && (pending_cancel == record.jobs.end() ||
@@ -758,6 +764,7 @@ void worker_session(std::uint16_t port, const std::string& id, const std::string
     CompletionNotice completed;
     struct Execution {
         std::atomic<bool> cancel{false};
+        std::atomic<bool> finished{false};
         std::future<WorkerOutcome> future;
         std::uint32_t attempt = 0;
         Resources limits{0, 0};
@@ -777,9 +784,8 @@ void worker_session(std::uint16_t port, const std::string& id, const std::string
     auto next_heartbeat = Clock::now();
     try {
         while (!stopped) {
-            if (stopped) break;
             const auto finished = std::find_if(executions.begin(), executions.end(), [](const auto& entry) {
-                return entry.second->future.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+                return entry.second->finished.load();
             });
             if (finished != executions.end()) {
                 const auto& job_id = finished->first;
@@ -816,6 +822,7 @@ void worker_session(std::uint16_t port, const std::string& id, const std::string
             auto response = net::receive(socket);
             const auto received_at = Clock::now();
             next_heartbeat = received_at + std::chrono::milliseconds(500);
+            if (slots > 1 && executions.size() < slots && response.type == Type::ok) next_heartbeat = received_at;
             if (response.type == Type::stop_attempt) {
                 const auto found = response.fields.empty() ? executions.end() : executions.find(response.fields[0]);
                 if (found == executions.end() || response.fields.size() != 2 ||
@@ -864,9 +871,13 @@ void worker_session(std::uint16_t port, const std::string& id, const std::string
                 execution->limits = limits;
                 auto& active = *executions.emplace(job_id, std::move(execution)).first->second;
                 active.future = std::async(std::launch::async, [arguments = std::move(arguments), files = std::move(files), timeout,
-                                                         received_at, limits, root = resource_root ? &*resource_root : nullptr, &cancel = active.cancel, &completed] {
-                    struct Notify { CompletionNotice& notice; ~Notify() { notice.signal(); } } notify{completed};
-                    return perform(arguments, files, static_cast<std::uint32_t>(timeout), cancel, received_at, root, limits);
+                                                         received_at, limits, root = resource_root ? &*resource_root : nullptr, &active, &completed] {
+                    struct Notify {
+                        Execution& execution;
+                        CompletionNotice& notice;
+                        ~Notify() { execution.finished = true; notice.signal(); }
+                    } notify{active, completed};
+                    return perform(arguments, files, static_cast<std::uint32_t>(timeout), active.cancel, received_at, root, limits);
                 });
                 if (executions.size() < slots) next_heartbeat = Clock::now();
             } else expect_worker_ok(response);

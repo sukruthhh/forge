@@ -30,6 +30,14 @@ acknowledges cleanup, or the session is lost. Every result must match a job and
 attempt owned by that session. A lost session processes all of its jobs separately
 under their existing retry/cancellation rules.
 
+With spare slots and running work, the coordinator holds pending heartbeats for
+up to 25 ms and wakes on new assignments/cancellations. The worker immediately
+renews these requests. This avoids the older 500-ms active-heartbeat dispatch gap
+while bounding how long the one control thread can wait before sending a finished
+result. Idle workers retain 500-ms pending requests; full workers retain their
+500-ms heartbeat interval and completion notifications. This is a bounded
+long-poll tradeoff, not fully asynchronous bidirectional streaming.
+
 After transport loss, the worker cancels and consumes every execution before
 reconnecting. Failure to clean a cgroup retires the whole worker, including when
 another job or a transport error fails at the same time. Old results are not
@@ -71,3 +79,10 @@ python3 benchmarks/run.py --binary build/release/forge \
 The experiment uses managed local worker processes, not physical-machine scaling.
 The harness records both slot settings, binary hashes, all warmups and failed
 trials. Performance comparisons use complete batch durations, not test run times.
+
+During refinement, one local Debug benchmark smoke failed before recording a
+batch duration. Its temporary fixture did not retain a useful failure cause;
+it remains unexplained. Trial diagnostics are now included in test failures.
+Three repeated benchmark-suite runs, 32 retained diagnostic smoke trials and a
+subsequent full Debug run passed. These reruns do not establish that the
+intermittent issue is resolved; the retained measurement experiments are separate.
