@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <openssl/err.h>
+#include <openssl/sslerr.h>
 #include <poll.h>
 #include <stdexcept>
 #include <sys/socket.h>
@@ -17,7 +18,7 @@ namespace forge::net {
 namespace {
 using Clock = std::chrono::steady_clock;
 [[noreturn]] void fail(const char* operation) {
-    throw std::runtime_error(std::string(operation) + ": " + std::strerror(errno));
+    throw TransportError(std::string(operation) + ": " + std::strerror(errno));
 }
 void append32(std::vector<std::uint8_t>& out, std::uint32_t value) {
     for (int shift = 24; shift >= 0; shift -= 8) out.push_back((value >> shift) & 255);
@@ -31,11 +32,11 @@ std::uint32_t read32(const std::vector<std::uint8_t>& in, std::size_t& offset) {
 void wait_ready(int fd, short events, Clock::time_point deadline) {
     for (;;) {
         const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count();
-        if (remaining <= 0) throw std::runtime_error("I/O deadline exceeded");
+        if (remaining <= 0) throw TransportError("I/O deadline exceeded");
         pollfd p{fd, events, 0};
         const int ready = ::poll(&p, 1, static_cast<int>(std::min<long long>(remaining, INT_MAX)));
         if (ready < 0) { if (errno == EINTR) continue; fail("poll"); }
-        if (ready == 0) throw std::runtime_error("I/O deadline exceeded");
+        if (ready == 0) throw TransportError("I/O deadline exceeded");
         return;
     }
 }
@@ -43,13 +44,16 @@ void wait_tls(Connection& connection, int result, Clock::time_point deadline) {
     const int error = SSL_get_error(connection.tls(), result);
     if (error == SSL_ERROR_WANT_READ) wait_ready(connection.get(), POLLIN, deadline);
     else if (error == SSL_ERROR_WANT_WRITE) wait_ready(connection.get(), POLLOUT, deadline);
-    else throw std::runtime_error("TLS connection failed (certificate verification or peer I/O)");
+    else if (error == SSL_ERROR_ZERO_RETURN || error == SSL_ERROR_SYSCALL ||
+             (error == SSL_ERROR_SSL && ERR_GET_REASON(ERR_peek_last_error()) == SSL_R_UNEXPECTED_EOF_WHILE_READING))
+        throw TransportError("TLS peer disconnected or transport failed");
+    else throw std::runtime_error("TLS handshake or protocol rejected; check peer certificates, purpose and IP identity");
 }
 void transfer(Connection& connection, std::uint8_t* bytes, std::size_t size,
               bool writing, Clock::time_point deadline) {
     std::size_t offset = 0;
     while (offset < size) {
-        if (Clock::now() >= deadline) throw std::runtime_error("I/O deadline exceeded");
+        if (Clock::now() >= deadline) throw TransportError("I/O deadline exceeded");
         if (connection.tls()) {
             ERR_clear_error();
             const int count = writing ? SSL_write(connection.tls(), bytes + offset, static_cast<int>(size - offset))
@@ -64,7 +68,7 @@ void transfer(Connection& connection, std::uint8_t* bytes, std::size_t size,
                 if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
                 fail(writing ? "send" : "receive");
             }
-            if (count == 0) throw std::runtime_error("peer disconnected");
+            if (count == 0) throw TransportError("peer disconnected");
             offset += static_cast<std::size_t>(count);
         }
     }
@@ -106,12 +110,16 @@ TlsContext configured_tls() {
     TlsContext context(SSL_CTX_new(TLS_method()), SSL_CTX_free);
     if (!context) throw std::runtime_error("cannot create TLS context");
     SSL_CTX_set_default_passwd_cb(context.get(), [](char*, int, int, void*) { return 0; });
-    if (SSL_CTX_set_min_proto_version(context.get(), TLS1_3_VERSION) != 1 ||
-        SSL_CTX_load_verify_locations(context.get(), ca, nullptr) != 1 ||
-        SSL_CTX_use_certificate_chain_file(context.get(), certificate) != 1 ||
-        SSL_CTX_use_PrivateKey_file(context.get(), key, SSL_FILETYPE_PEM) != 1 ||
-        SSL_CTX_check_private_key(context.get()) != 1)
-        throw std::runtime_error("cannot configure TLS trust, certificate, or private key");
+    if (SSL_CTX_set_min_proto_version(context.get(), TLS1_3_VERSION) != 1)
+        throw std::runtime_error("cannot configure TLS 1.3");
+    if (SSL_CTX_load_verify_locations(context.get(), ca, nullptr) != 1)
+        throw std::runtime_error("cannot load FORGE_TLS_CA trust bundle; check its path and PEM certificates");
+    if (SSL_CTX_use_certificate_chain_file(context.get(), certificate) != 1)
+        throw std::runtime_error("cannot load FORGE_TLS_CERT certificate chain; check its path and PEM encoding");
+    if (SSL_CTX_use_PrivateKey_file(context.get(), key, SSL_FILETYPE_PEM) != 1)
+        throw std::runtime_error("cannot load FORGE_TLS_KEY; check its path, unencrypted PEM encoding and matching FORGE_TLS_CERT");
+    if (SSL_CTX_check_private_key(context.get()) != 1)
+        throw std::runtime_error("FORGE_TLS_KEY does not match FORGE_TLS_CERT");
     SSL_CTX_set_verify(context.get(), SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, nullptr);
     SSL_CTX_set_verify_depth(context.get(), 8);
     return context;
@@ -127,7 +135,7 @@ void Connection::secure(const TlsContext& context, bool server, const std::strin
         throw std::runtime_error("cannot configure TLS server IP verification");
     const auto deadline = Clock::now() + std::chrono::seconds(3);
     for (;;) {
-        if (Clock::now() >= deadline) throw std::runtime_error("TLS handshake deadline exceeded");
+        if (Clock::now() >= deadline) throw TransportError("TLS handshake deadline exceeded");
         ERR_clear_error();
         const int result = server ? SSL_accept(tls_.get()) : SSL_connect(tls_.get());
         if (result == 1) break;

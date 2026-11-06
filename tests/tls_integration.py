@@ -193,7 +193,7 @@ try:
                         "-aes-256-cbc", "-passout", "pass:fixture-only"], check=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         result = command("cluster", "--port", port, env=dict(client_env, FORGE_TLS_KEY=str(trusted / "encrypted.key")))
-        require(result.returncode != 0 and b"cannot configure TLS" in result.stderr,
+        require(result.returncode != 0 and b"FORGE_TLS_KEY" in result.stderr,
                 "encrypted private key did not fail without an interactive prompt")
         for args in (("cluster", "--host", "localhost"), ("coordinator", "--host", "127.0.0.1"),
                      ("cluster", "--bind", "127.0.0.1"), ("cluster", "--host", "127.0.0.1", "--host", "127.0.0.1")):

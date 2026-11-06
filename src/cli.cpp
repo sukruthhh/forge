@@ -34,6 +34,7 @@ int main(int argc, char** argv) {
                      "Map: at most 256 inputs; output directory must be new; jobs is a parallelism cap.\n"
                      "Run/map --retries 0..3: retry worker loss only (default 0); commands can execute more than once.\n"
                      "Join --cgroup-root PATH: use a provisioned cgroup v2 delegation for job limits.\n"
+                     "Join --reconnect: retry transport loss with capped backoff; job retries remain separate.\n"
                      "Run/map --enforce-limits: require CPU/RAM enforcement and a positive --memory byte limit.\n"
                      "Network options: coordinator --bind IPv4; other commands --host IPv4 (default 127.0.0.1).\n"
                      "Remote endpoints require FORGE_TLS_CA, FORGE_TLS_CERT, FORGE_TLS_KEY (mutual TLS).\n"
@@ -48,7 +49,7 @@ int main(int argc, char** argv) {
     std::string architecture = "native";
     bool architecture_seen = false;
     bool endpoint_seen = false;
-    bool enforce_limits = false, details = false;
+    bool enforce_limits = false, details = false, reconnect = false;
     std::string cgroup_root;
     std::uint32_t cpu = 1, timeout = 30, retries = 0;
     std::uint64_t memory = 0;
@@ -65,6 +66,10 @@ int main(int argc, char** argv) {
         first_option = 3;
     }
     for (int i = first_option; i < argc; ++i) {
+        if (command == "join" && std::string_view(argv[i]) == "--reconnect" && !reconnect) {
+            reconnect = true;
+            continue;
+        }
         if ((command == "run" || command == "map") && std::string_view(argv[i]) == "--enforce-limits" && !enforce_limits) {
             enforce_limits = true;
             continue;
@@ -141,7 +146,7 @@ int main(int argc, char** argv) {
     if (command == "timings") return forge::timings(port, log_id, endpoint);
     if (command == "attempts") return forge::attempts(port, log_id, endpoint);
     if (command == "cancel") return forge::cancel(port, log_id, endpoint);
-    if (command == "join" && !id.empty()) return forge::join(port, id, endpoint, cgroup_root);
+    if (command == "join" && !id.empty()) return forge::join(port, id, endpoint, cgroup_root, reconnect);
     if ((command == "run" || command == "map") && !arguments.empty()) {
         forge::TaskRequest task{cpu, memory, timeout, architecture, arguments, forge::read_inputs(files), retries, enforce_limits};
         if (command == "run") return forge::run(port, endpoint, task);

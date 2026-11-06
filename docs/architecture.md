@@ -242,3 +242,21 @@ empty and remove only the owned directory. Cleanup failure retires the worker
 without reporting success. Crash orphans still require administrative teardown.
 This improves trusted-workload resource control; it supplies neither namespace
 isolation nor a secure sandbox. See [resource-enforcement.md](resource-enforcement.md).
+
+## 015: Reconnect transport sessions without replaying job state
+
+Make worker reconnection explicit with join --reconnect. Distinguish transport
+loss from fatal protocol, authentication, TLS configuration and resource-cleanup
+errors. Retry the former with exponential backoff plus jitter, bounded at five
+seconds plus 100 milliseconds; reset only after ten seconds of successful
+heartbeats. Keep single connection ownership and the existing framing/admission
+protocol. A lost registration acknowledgement can make the old ID temporarily
+busy; wait for retirement rather than replacing the live session.
+
+On loss, close the old connection, cancel and consume its execution future, then
+discard session-local results and attempt identity before new admission. A cleanup
+exception must supersede the transport error so reconnect cannot conceal uncertain
+cgroup capacity. Rediscover capacity and reload/probe configured resources per
+session. Result-acknowledgement loss never causes worker-side replay. Job retry
+ownership stays with the coordinator and explicit caller budget. This does not
+provide coordinator durability or exactly-once effects. See [worker-reconnect.md](worker-reconnect.md).

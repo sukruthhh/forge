@@ -55,6 +55,9 @@ if(BUILD_TESTING)
   add_test(NAME recovery_integration COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/recovery_integration.py $<TARGET_FILE:forge>)
   set_tests_properties(recovery_integration PROPERTIES TIMEOUT 90)
+  add_test(NAME reconnect_integration COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/reconnect_integration.py $<TARGET_FILE:forge>)
+  set_tests_properties(reconnect_integration PROPERTIES TIMEOUT 90)
   add_test(NAME cancellation_integration COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cancellation_integration.py $<TARGET_FILE:forge>)
   set_tests_properties(cancellation_integration PROPERTIES TIMEOUT 90)

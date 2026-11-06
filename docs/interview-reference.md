@@ -3,7 +3,7 @@
 Updated: November 6, 2026
 
 Implementation baseline: Linux runtime with TLS, staging/map, attempts/retries,
-cancellation and delegated cgroup-v2 enforcement.
+cancellation, delegated cgroup-v2 enforcement and opt-in worker reconnection.
 
 Stack: **C++20 | Linux | TCP/IP | CMake**
 
@@ -82,6 +82,7 @@ motivation in your own words rather than presenting this document as a script.
 | External users | No adoption or independent onboarding evidence; project-owner assisted setup observations are documented separately |
 | Numerical workload | Oscillator RK4 sweep with analytic checks; 240 executions validated in completed comparisons, cluster 2.0458 s versus PC sequential 2.8041 s and parallel 1.3767 s; generated model, not customer validation |
 | Initial physical-machine execution | Two staged jobs succeeded on distinct PC/laptop Ubuntu WSL2 workers; mutual TLS inside SSH, verified input hashes and accepted attempt history |
+| Worker transport reconnection | Opt-in capped backoff with fresh admission/capacity/TLS files, cleanup before readmission, no replay; automated tests, physical flag deployment still pending |
 | Physical-host worker-process crash recovery | Five PC worker SIGKILL trials completed on the laptop on attempt 2; inspection includes polling delay, workload sleeps eight seconds, old-child cleanup performed by fixture |
 
 **Validation record, October 31:** GCC 13.3 Linux Debug build succeeded in the
@@ -236,13 +237,15 @@ it alone does not demonstrate lower latency or greater reliability.
 **Why CMake?** It describes targets and dependencies and integrates the build with
 CTest. Ninja is a build executor; GCC is the compiler. These are different roles.
 
-## 7. Failure detection implemented; job recovery planned
+## 7. Failure detection, attempts and recovery
 
 Workers send heartbeats about every 500 ms. Snapshot inspection marks one second
 without contact SUSPECT and two seconds DEAD; disconnects also mark DEAD. The
 registered session has a two-second receive deadline. This is inspection/session
 cleanup; opted-in jobs can be requeued on session loss. Duplicate connected IDs are rejected; a closed
-session's ID can reconnect. There is no automatic worker reconnect yet.
+session's ID can reconnect. join --reconnect now optionally retries transport loss
+with capped backoff and fresh session state; fatal configuration/protocol/cleanup
+errors exit. See [worker reconnection](worker-reconnect.md).
 
 Current active states are QUEUED, ASSIGNED, RUNNING. Terminal states are SUCCEEDED,
 FAILED, TIMED_OUT, LOST, UNSCHEDULABLE, and CANCELLED. A terminal response carries
@@ -767,8 +770,8 @@ partition can leave an old child running after a replacement starts. At-least-on
 semantics allow repeated side effects; bounded retries guarantee neither execution
 nor success. The test observes a surviving first child and two external writes,
 then cleans up only its owned process group/workspace. Exactly-once execution,
-durable coordinator recovery, automatic reconnect and namespaces remain
-unimplemented. Cgroup enforcement was added subsequently, as described below;
+durable coordinator recovery and namespaces remain unimplemented. Opt-in worker
+reconnect and cgroup enforcement were added subsequently, as described below;
 it does not guarantee cleanup after worker loss. Only opt in when repetition is acceptable.
 
 Coverage includes default loss, all four permitted attempts, exhaustion, unavailable
@@ -878,3 +881,29 @@ Why a startup probe? Writable controls alone do not establish permission to migr
 the workload from the worker's leaf to the delegated job child. Why retire after
 cleanup failure? Reusing that worker would hide uncertain remaining resources.
 Full setup and limitations: [resource-enforcement.md](resource-enforcement.md).
+
+## Worker reconnection and actionable setup errors (November 6)
+
+The assisted laptop setup exposed two concrete problems: a missing trust.pem
+produced one opaque TLS error, and an idle I/O timeout ended the worker process.
+TLS load errors now name the responsible environment variable without printing
+credentials. join --reconnect now optionally survives transport failures using
+250-ms-to-5-s backoff plus bounded jitter. Fatal admission/protocol/configuration
+errors remain visible. This addresses observed engineering friction, not measured
+customer onboarding improvement.
+
+Interview distinction: reconnecting a worker restores capacity, while --retries
+controls whether an interrupted job may execute again. They are separate choices.
+The worker consumes old execution cleanup before new admission and discards old
+result/attempt state. Cleanup failure must supersede a transport exception; otherwise
+an innocent-looking retry could advertise capacity whose old work was not cleaned
+up. A lost registration acknowledgement can cause a transient busy ID, so wait
+without replacing a live session. A lost result acknowledgement never causes replay.
+
+Seventeen local suites passed in both configurations; final focused checks cover
+backoff reset/cap/stop, timeout, uncertain registration, duplicate IDs, active staged
+cleanup, result-ack loss, reused job IDs, coordinator restart, affinity refresh,
+TLS transport loss and certificate-file rotation. The real-kernel fixture confirms
+failed cgroup cleanup remains fatal even when it coincides with transport loss.
+Older physical performance reports were not remeasured for this runtime change.
+Details and limits: [worker-reconnect.md](worker-reconnect.md).

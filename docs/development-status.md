@@ -56,7 +56,7 @@ scaling, representative workloads and fault recovery metrics remain unverified.
 |---|---|
 | A: actual cross-machine execution | Initial staged execution verified on PC/laptop Ubuntu WSL2 workers with mutual TLS inside SSH; broader failure/connectivity tests, identity binding and ARM64 validation remain |
 | B: useful distributed batch workloads | Flat staging and map now work; larger transfers, richer dependency packaging, output-file retrieval, and real-workload physical-machine validation remain |
-| C: fault tolerance | Opt-in bounded worker-loss retries, attempt identity/history, stale-result fencing and at-least-once semantics are implemented; persistence, restart recovery, worker reconnect, broader fault injection and recovery-time measurements remain |
+| C: fault tolerance | Opt-in bounded worker-loss retries, attempt history, stale-result fencing, at-least-once semantics and opt-in worker transport reconnect are implemented; persistence, durable restart recovery, broader partition testing and recovery measurements remain |
 | D: Linux isolation | Cancellation, visible affinity/cgroup capacity discovery, delegated cgroup-v2 CPU/RAM caps and cgroup-wide cleanup are implemented; namespaces, credentials/privileges, broader process controls and evaluated security boundaries remain |
 | E: product quality | Practical installation/onboarding, reproducible real-workload benchmarks, meaningful CI/integration coverage, clear documentation, independent user feedback |
 
@@ -132,6 +132,15 @@ parameter sweep, using RK4 with an independent analytic position/velocity oracle
 See [simulation workload](../benchmarks/simulation-workload.md). This is a generated
 scientific-model example, not a validated customer workload; implementation and
 correctness tests alone establish no performance result.
+
+Opt-in [worker reconnection](worker-reconnect.md) now retries transport loss with
+capped exponential backoff and jitter, fresh capacity/credential discovery, and
+no old-result replay. Local configuration, authentication/protocol rejection and
+resource-cleanup failures remain fatal. Local validation passed seventeen suites
+in Release and Debug, with final targeted reconnect checks afterward, the private
+mutual-TLS bridge, and real-kernel cleanup checks with both binaries. Physical
+deployment of this flag and user-outcome measurements remain separate; older
+benchmark results still describe their recorded runtime revisions.
 
 The [November 6 simulation experiment](../benchmarks/results/2026-11-06-simulation-001/README.md)
 now validates 240 executions across completed physical and PC-only comparisons.

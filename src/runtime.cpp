@@ -13,6 +13,7 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <deque>
+#include <exception>
 #include <future>
 #include <iostream>
 #include <map>
@@ -21,6 +22,7 @@
 #include <memory>
 #include <optional>
 #include <poll.h>
+#include <random>
 #include <stdexcept>
 #include <sys/socket.h>
 #include <sys/utsname.h>
@@ -32,6 +34,8 @@ namespace {
 using Clock = std::chrono::steady_clock;
 using net::Message;
 using net::Type;
+constexpr char worker_id_busy[] = "worker ID already connected";
+struct WorkerIdBusy : std::runtime_error { WorkerIdBusy() : std::runtime_error(worker_id_busy) {} };
 static_assert(std::atomic<bool>::is_always_lock_free);
 std::atomic<bool> stopped{false};
 void stop(int) { stopped.store(true, std::memory_order_relaxed); }
@@ -503,7 +507,7 @@ void handle(net::Socket peer, Registry& registry, const std::string& token, cons
             // Do not replace a live session: its cleanup could otherwise mark
             // the replacement disconnected. Reuse IDs only after session close.
             if (existing != registry.workers.end() && existing->second.connected)
-                throw std::runtime_error("worker ID already connected");
+                throw std::runtime_error(worker_id_busy);
             if (existing == registry.workers.end() && registry.workers.size() >= 64)
                 throw std::runtime_error("worker registry full");
             registry.workers.insert_or_assign(f[0], Record{
@@ -692,9 +696,15 @@ int coordinator(std::uint16_t port, const std::string& bind) {
     return 0;
 }
 
-int join(std::uint16_t port, const std::string& id, const std::string& host, const std::string& cgroup_root) {
-    if (!label(id)) throw std::runtime_error("worker ID must be 1-64 letters, digits, dots, underscores or hyphens");
-    install_signals();
+namespace {
+void expect_worker_ok(const Message& message) {
+    if (message.type == Type::error && message.fields == std::vector<std::string>{"I/O deadline exceeded"})
+        throw net::TransportError("coordinator session I/O deadline exceeded");
+    expect_ok(message);
+}
+
+void worker_session(std::uint16_t port, const std::string& id, const std::string& host,
+                    const std::string& cgroup_root, bool& registration_started, bool& stable) {
     utsname system{};
     std::optional<CgroupRoot> resource_root;
     if (!cgroup_root.empty()) resource_root.emplace(cgroup_root);
@@ -705,95 +715,144 @@ int join(std::uint16_t port, const std::string& id, const std::string& host, con
     Message registration{Type::register_worker, {id, "linux", system.machine, std::to_string(capacity.cpu),
         std::to_string(capacity.memory_bytes), "0", "staging-v1", "longpoll-v1", "timing-v1", "attempt-v1", "cancel-v1"}};
     if (resource_root) registration.fields.push_back("cgroup2-v1");
+    registration_started = true;
     net::send(socket, registration);
-    expect_ok(net::receive(socket));
+    const auto admission = net::receive(socket);
+    if (admission.type == Type::error && admission.fields == std::vector<std::string>{worker_id_busy})
+        throw WorkerIdBusy();
+    expect_ok(admission);
+    const auto registered_at = Clock::now();
     std::cout << "Worker " << id << " registered" << std::endl;
     std::atomic<bool> cancel{false};
     CompletionNotice completed;
     std::future<WorkerOutcome> execution;
-    // Cancel before the future destructor waits during disconnect or shutdown.
-    struct CancelOnExit { std::atomic<bool>& flag; ~CancelOnExit() { flag = true; } } cleanup{cancel};
     std::string job_id;
     std::uint32_t attempt = 0;
     auto next_heartbeat = Clock::now();
+    try {
+        while (!stopped) {
+            bool finished = false;
+            if (execution.valid()) {
+                std::unique_lock lock(completed.mutex);
+                completed.changed.wait_until(lock, std::min(next_heartbeat, Clock::now() + std::chrono::milliseconds(100)),
+                                            [&] { return completed.ready || stopped; });
+                finished = completed.ready;
+            }
+            if (stopped) break;
+            if (finished) {
+                WorkerOutcome outcome;
+                try { outcome = execution.get(); }
+                catch (const ResourceCleanupError&) { throw; }
+                catch (const std::exception& error) {
+                    outcome.result.exit_code = 125;
+                    outcome.result.error = std::string("worker execution setup failed: ") + error.what();
+                    outcome.completed_at = Clock::now();
+                }
+                const auto& result = outcome.result;
+                Message response{Type::profiled_result, {job_id, std::to_string(result.exit_code),
+                    result.output, result.error, result.timed_out ? "1" : "0", result.truncated ? "1" : "0"}};
+                for (const auto phase : outcome.phases) response.fields.push_back(std::to_string(phase));
+                response.fields.push_back(std::to_string(microseconds(outcome.completed_at, Clock::now())));
+                response.type = Type::attempt_result;
+                response.fields.insert(response.fields.begin() + 1, std::to_string(attempt));
+                net::send(socket, response);
+                expect_worker_ok(net::receive(socket));
+                job_id.clear();
+                continue;
+            }
+            if (execution.valid() && Clock::now() < next_heartbeat) continue;
+            net::send(socket, {Type::heartbeat, {}});
+            auto response = net::receive(socket);
+            const auto received_at = Clock::now();
+            next_heartbeat = received_at + std::chrono::milliseconds(500);
+            if (response.type == Type::stop_attempt) {
+                if (!execution.valid() || response.fields.size() != 2 || response.fields[0] != job_id ||
+                    number(response.fields[1]) != attempt)
+                    throw std::runtime_error("invalid cancellation attempt");
+                cancel = true;
+            } else if (response.type == Type::attempt_assignment || response.type == Type::attempt_staged_assignment ||
+                       response.type == Type::limited_assignment || response.type == Type::limited_staged_assignment) {
+                const bool limited = response.type == Type::limited_assignment || response.type == Type::limited_staged_assignment;
+                if (limited != resource_root.has_value()) throw std::runtime_error("assignment resource enforcement capability mismatch");
+                if (response.fields.size() < 4 || number(response.fields[1]) == 0 || number(response.fields[1]) > 4)
+                    throw std::runtime_error("invalid execution attempt");
+                attempt = static_cast<std::uint32_t>(number(response.fields[1]));
+                response.fields.erase(response.fields.begin() + 1);
+                response.type = response.type == Type::attempt_assignment || response.type == Type::limited_assignment ?
+                    Type::assignment : Type::staged_assignment;
+                if (execution.valid() || response.fields.size() < 3 ||
+                    !label(response.fields[0])) throw std::runtime_error("invalid assignment");
+                const auto timeout = number(response.fields[1]);
+                if (timeout == 0 || timeout > 30) throw std::runtime_error("invalid execution timeout");
+                job_id = response.fields[0];
+                std::size_t offset = 2;
+                Resources limits;
+                if (limited) {
+                    if (response.fields.size() < 5) throw std::runtime_error("missing assignment limits");
+                    const auto cpu = number(response.fields[offset++]);
+                    limits.memory_bytes = number(response.fields[offset++]);
+                    if (cpu == 0 || cpu > capacity.cpu || limits.memory_bytes > capacity.memory_bytes)
+                        throw std::runtime_error("assignment exceeds worker capacity");
+                    limits.cpu = static_cast<std::uint32_t>(cpu);
+                }
+                std::vector<InputFile> files;
+                if (response.type == Type::staged_assignment) files = parse_inputs(response.fields, offset);
+                if (offset >= response.fields.size() || response.fields.size() - offset > 128 || response.fields[offset].empty())
+                    throw std::runtime_error("invalid assignment arguments");
+                std::vector<std::string> arguments(response.fields.begin() + static_cast<std::ptrdiff_t>(offset), response.fields.end());
+                cancel = false;
+                { std::lock_guard lock(completed.mutex); completed.ready = false; }
+                execution = std::async(std::launch::async, [arguments = std::move(arguments), files = std::move(files), timeout,
+                                                         received_at, limits, root = resource_root ? &*resource_root : nullptr, &cancel, &completed] {
+                    struct Notify { CompletionNotice& notice; ~Notify() { notice.signal(); } } notify{completed};
+                    return perform(arguments, files, static_cast<std::uint32_t>(timeout), cancel, received_at, root, limits);
+                });
+            } else expect_worker_ok(response);
+            stable |= received_at - registered_at >= std::chrono::seconds(10);
+        }
+    } catch (...) {
+        const auto error = std::current_exception();
+        ::shutdown(socket.get(), SHUT_RDWR);
+        cancel = true;
+        if (execution.valid()) execution.get();
+        std::rethrow_exception(error);
+    }
+    cancel = true;
+    if (execution.valid()) execution.get();
+}
+
+}
+
+int join(std::uint16_t port, const std::string& id, const std::string& host,
+         const std::string& cgroup_root, bool reconnect) {
+    if (!label(id)) throw std::runtime_error("worker ID must be 1-64 letters, digits, dots, underscores or hyphens");
+    install_signals();
+    auto delay = std::chrono::milliseconds(250);
+    std::mt19937 jitter(std::random_device{}());
+    bool previous_registration = false;
     while (!stopped) {
-        bool finished = false;
-        if (execution.valid()) {
-            std::unique_lock lock(completed.mutex);
-            completed.changed.wait_until(lock, std::min(next_heartbeat, Clock::now() + std::chrono::milliseconds(100)),
-                                        [&] { return completed.ready || stopped; });
-            finished = completed.ready;
+        bool registration_started = false, stable = false;
+        std::string reason;
+        try {
+            worker_session(port, id, host, cgroup_root, registration_started, stable);
+            return 0;
+        } catch (const net::TransportError& error) {
+            if (stopped) return 0;
+            if (!reconnect) throw;
+            reason = error.what();
+        } catch (const WorkerIdBusy& error) {
+            if (stopped) return 0;
+            if (!reconnect || !previous_registration) throw;
+            reason = error.what();
         }
-        if (stopped) break;
-        if (finished) {
-            WorkerOutcome outcome;
-            try { outcome = execution.get(); }
-            catch (const ResourceCleanupError&) { throw; }
-            catch (const std::exception& error) {
-                outcome.result.exit_code = 125;
-                outcome.result.error = std::string("worker execution setup failed: ") + error.what();
-                outcome.completed_at = Clock::now();
-            }
-            const auto& result = outcome.result;
-            Message response{Type::profiled_result, {job_id, std::to_string(result.exit_code),
-                result.output, result.error, result.timed_out ? "1" : "0", result.truncated ? "1" : "0"}};
-            for (const auto phase : outcome.phases) response.fields.push_back(std::to_string(phase));
-            response.fields.push_back(std::to_string(microseconds(outcome.completed_at, Clock::now())));
-            response.type = Type::attempt_result;
-            response.fields.insert(response.fields.begin() + 1, std::to_string(attempt));
-            net::send(socket, response);
-            expect_ok(net::receive(socket));
-            job_id.clear();
-            continue;
-        }
-        if (execution.valid() && Clock::now() < next_heartbeat) continue;
-        net::send(socket, {Type::heartbeat, {}});
-        auto response = net::receive(socket);
-        const auto received_at = Clock::now();
-        next_heartbeat = received_at + std::chrono::milliseconds(500);
-        if (response.type == Type::stop_attempt) {
-            if (!execution.valid() || response.fields.size() != 2 || response.fields[0] != job_id ||
-                number(response.fields[1]) != attempt)
-                throw std::runtime_error("invalid cancellation attempt");
-            cancel = true;
-        } else if (response.type == Type::attempt_assignment || response.type == Type::attempt_staged_assignment ||
-                   response.type == Type::limited_assignment || response.type == Type::limited_staged_assignment) {
-            const bool limited = response.type == Type::limited_assignment || response.type == Type::limited_staged_assignment;
-            if (limited != resource_root.has_value()) throw std::runtime_error("assignment resource enforcement capability mismatch");
-            if (response.fields.size() < 4 || number(response.fields[1]) == 0 || number(response.fields[1]) > 4)
-                throw std::runtime_error("invalid execution attempt");
-            attempt = static_cast<std::uint32_t>(number(response.fields[1]));
-            response.fields.erase(response.fields.begin() + 1);
-            response.type = response.type == Type::attempt_assignment || response.type == Type::limited_assignment ?
-                Type::assignment : Type::staged_assignment;
-            if (execution.valid() || response.fields.size() < 3 ||
-                !label(response.fields[0])) throw std::runtime_error("invalid assignment");
-            const auto timeout = number(response.fields[1]);
-            if (timeout == 0 || timeout > 30) throw std::runtime_error("invalid execution timeout");
-            job_id = response.fields[0];
-            std::size_t offset = 2;
-            Resources limits;
-            if (limited) {
-                if (response.fields.size() < 5) throw std::runtime_error("missing assignment limits");
-                const auto cpu = number(response.fields[offset++]);
-                limits.memory_bytes = number(response.fields[offset++]);
-                if (cpu == 0 || cpu > capacity.cpu || limits.memory_bytes > capacity.memory_bytes)
-                    throw std::runtime_error("assignment exceeds worker capacity");
-                limits.cpu = static_cast<std::uint32_t>(cpu);
-            }
-            std::vector<InputFile> files;
-            if (response.type == Type::staged_assignment) files = parse_inputs(response.fields, offset);
-            if (offset >= response.fields.size() || response.fields.size() - offset > 128 || response.fields[offset].empty())
-                throw std::runtime_error("invalid assignment arguments");
-            std::vector<std::string> arguments(response.fields.begin() + static_cast<std::ptrdiff_t>(offset), response.fields.end());
-            cancel = false;
-            { std::lock_guard lock(completed.mutex); completed.ready = false; }
-            execution = std::async(std::launch::async, [arguments = std::move(arguments), files = std::move(files), timeout,
-                                                     received_at, limits, root = resource_root ? &*resource_root : nullptr, &cancel, &completed] {
-                struct Notify { CompletionNotice& notice; ~Notify() { notice.signal(); } } notify{completed};
-                return perform(arguments, files, static_cast<std::uint32_t>(timeout), cancel, received_at, root, limits);
-            });
-        } else expect_ok(response);
+        previous_registration |= registration_started;
+        if (stable)
+            delay = std::chrono::milliseconds(250);
+        const auto wait = delay + std::chrono::milliseconds(std::uniform_int_distribution<int>(0, 100)(jitter));
+        std::cerr << "[forge] worker session ended: " << reason << "; reconnecting in " << wait.count() << " ms\n";
+        const auto deadline = Clock::now() + wait;
+        while (!stopped && Clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        delay = std::min(delay * 2, std::chrono::milliseconds(5000));
     }
     return 0;
 }

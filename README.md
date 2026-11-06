@@ -91,6 +91,10 @@ SSH. Physical scaling and recovery measurements remain pending.
 Workers report registration-time CPU affinity/quota and memory headroom within
 visible cgroup restrictions. CUDA detection remains unavailable.
 
+Use `join --reconnect` to keep a worker retrying transport failures with capped
+backoff. This is separate from opt-in job retries; configuration, authentication,
+protocol and resource-cleanup failures remain fatal. See [worker reconnection](docs/worker-reconnect.md).
+
 `run` executes trusted commands, with optional bounded flat-file staging. Captured output is
 limited to 16 KiB per stream, and runtime to 30 seconds. CPU/RAM reservations are
 placement accounting on ordinary workers. `join --cgroup-root PATH` enables a

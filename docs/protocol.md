@@ -58,7 +58,11 @@ send the next heartbeat immediately: the coordinator holds its response for up t
 heartbeat interval and receive immediate OK responses. Completion wakes the
 worker's connection-owning thread rather than waiting for the next heartbeat.
 A registered session has a two-second receive deadline.
-Any unexpected message is rejected. There is no automatic reconnect loop yet.
+Any unexpected message is rejected. join --reconnect optionally retries transport
+loss with fresh registration, capped backoff and no old-result replay; protocol
+and admission errors remain fatal except a transient busy ID after an interrupted
+prior registration. See [worker reconnection](worker-reconnect.md). Wire schemas
+and the coordinator's session deadlines remain unchanged.
 
 Snapshot states use elapsed time since registration or the last valid heartbeat:
 READY below one second, SUSPECT from one to two seconds, DEAD at two seconds or

@@ -4,10 +4,11 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import tempfile
 
-from runtime_fixture import Cluster, binary, environment, require, wait_for
+from runtime_fixture import Cluster, binary, environment, frame, receive, require, wait_for
 
 require(os.environ.get('FORGE_PRIVATE_CGROUP_TEST') == '1', 'use scripts/test-cgroup-enforcement.py')
 require(Path('/.dockerenv').is_file(), 'fixture must run in its disposable Docker container')
@@ -94,7 +95,7 @@ with concurrent.futures.ThreadPoolExecutor() as pool, Cluster() as cluster, temp
         os.chown(jobs, 0, 0)
         os.chown(root / 'cgroup.procs', 0, 0)
         os.chown(manager / 'cgroup.procs', 0, 0)
-    worker = cluster.start('join', '--id', 'enforcer', '--cgroup-root', str(jobs))
+    worker = cluster.start('join', '--id', 'enforcer', '--cgroup-root', str(jobs), '--reconnect')
     wait_for(lambda: b'enforcer\t' in cluster.cli('cluster').stdout, 'enforcing worker did not register')
     row = cluster.cli('cluster', '--details').stdout.decode().splitlines()[1].split('\t')
     require(row[9] == 'cgroup2-v1' and int(row[3]) == 2 and 0 < int(row[4]) <= 512 * 1024 * 1024,
@@ -179,6 +180,42 @@ with concurrent.futures.ThreadPoolExecutor() as pool, Cluster() as cluster, temp
     (leftover / 'nested').rmdir()
     leftover.rmdir()
     require(not list(jobs.glob('forge-*')), 'fixture leaked owned job cgroups')
+    marker = folder / 'disconnect-nested.json'
+    script = ('import pathlib,time\n'
+              'path=pathlib.Path("/sys/fs/cgroup")/pathlib.Path("/proc/self/cgroup").read_text().strip()[3:].lstrip("/")\n'
+              '(path/"nested").mkdir()\n'
+              f'pathlib.Path({str(marker)!r}).write_text(str(path))\n'
+              'time.sleep(20)\n')
+    with socket.socket() as fake:
+        fake.bind(('127.0.0.1', 0))
+        fake.listen()
+        fake.settimeout(8)
+        disconnected = subprocess.Popen([binary, 'join', '--id', 'disconnect-enforcer', '--reconnect',
+                                         '--cgroup-root', str(jobs), '--port', str(fake.getsockname()[1])],
+                                        env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cluster.processes.append(disconnected)
+        peer, _ = fake.accept()
+        with peer:
+            peer.settimeout(6)
+            require(receive(peer)[0] == 1, 'limited worker registration missing')
+            peer.sendall(frame(4))
+            require(receive(peer) == (2, []), 'limited worker heartbeat missing')
+            peer.sendall(frame(35, ['job-1', '1', '30', '1', str(32 * 1024 * 1024), 'python3', '-c', script]))
+            wait_for(lambda: marker.exists() and marker.stat().st_size > 0, 'disconnect cleanup fixture did not start')
+        wait_for(lambda: disconnected.poll() is not None, 'cleanup failure during disconnect reconnected the worker')
+        require(disconnected.returncode != 0, 'failed resource cleanup reported successful shutdown')
+        fake.settimeout(.5)
+        try:
+            unexpected, _ = fake.accept()
+        except socket.timeout:
+            pass
+        else:
+            unexpected.close()
+            raise AssertionError('worker readmitted after failed cgroup cleanup')
+    leftover = Path(marker.read_text())
+    require(leftover.parent == jobs and leftover.name.startswith('forge-'), 'refusing cleanup outside owned cgroup')
+    (leftover / 'nested').rmdir()
+    leftover.rmdir()
     subprocess.run(['mount', '--bind', str(jobs), str(jobs)], check=True)
     subprocess.run(['mount', '-o', 'remount,bind,ro', str(jobs)], check=True)
     result = cluster.cli('join', '--id', 'readonly', '--cgroup-root', str(jobs))

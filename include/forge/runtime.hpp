@@ -29,7 +29,8 @@ void validate_task(const TaskRequest&);
 TaskResult submit_task(std::uint16_t port, const std::string& host, const TaskRequest&);
 std::size_t staging_worker_count(std::uint16_t port, const std::string& host, const TaskRequest&);
 int coordinator(std::uint16_t port, const std::string& bind);
-int join(std::uint16_t port, const std::string& id, const std::string& host, const std::string& cgroup_root = {});
+int join(std::uint16_t port, const std::string& id, const std::string& host,
+         const std::string& cgroup_root = {}, bool reconnect = false);
 int cluster(std::uint16_t port, const std::string& host, bool details = false);
 int ps(std::uint16_t port, const std::string& host);
 int logs(std::uint16_t port, const std::string& id, const std::string& host);

@@ -4,11 +4,16 @@
 #include <cstdint>
 #include <memory>
 #include <openssl/ssl.h>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace forge::net {
+class TransportError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 class Socket {
 public:
     explicit Socket(int fd = -1) : fd_(fd) {}

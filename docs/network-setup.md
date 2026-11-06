@@ -127,7 +127,13 @@ passed all seven CTest suites (54.50 seconds). The final binary separately passe
 the four-container Docker bridge test. GitHub Actions is configured for both;
 local results do not establish the remote workflow's status.
 
-### Separate physical machines: pending verification
+### Separate physical machines: acceptance checklist
+
+Initial PC/laptop WSL2 execution over mutual TLS inside SSH, numerical/synthetic
+benchmarks and PC-worker-process crash recovery are now recorded in
+[development status](development-status.md). The broader acceptance checklist
+below still includes unverified cases. Worker --reconnect and variable-specific
+TLS setup errors are described in [worker reconnection](worker-reconnect.md).
 
 1. Record commit, compiler, Linux versions, machine names, and private IPs.
 2. Issue certificates with the coordinator's real reachable IP SAN and distribute
