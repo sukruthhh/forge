@@ -54,7 +54,7 @@ scaling, representative workloads and fault recovery metrics remain unverified.
 
 | Milestone | Completion evidence still required |
 |---|---|
-| A: actual cross-machine execution | TLS execution on separate physical Linux machines; record command origin, failures, and results |
+| A: actual cross-machine execution | Initial staged execution verified on PC/laptop Ubuntu WSL2 workers with mutual TLS inside SSH; broader failure/connectivity tests, identity binding and ARM64 validation remain |
 | B: useful distributed batch workloads | Flat staging and map now work; larger transfers, richer dependency packaging, output-file retrieval, and real-workload physical-machine validation remain |
 | C: fault tolerance | Opt-in bounded worker-loss retries, attempt identity/history, stale-result fencing and at-least-once semantics are implemented; persistence, restart recovery, worker reconnect, broader fault injection and recovery-time measurements remain |
 | D: Linux isolation | Cancellation, visible affinity/cgroup capacity discovery, delegated cgroup-v2 CPU/RAM caps and cgroup-wide cleanup are implemented; namespaces, credentials/privileges, broader process controls and evaluated security boundaries remain |
@@ -96,12 +96,21 @@ with both binaries, and the four-container mutual-TLS fixture passed. These
 durations describe test runs, not performance results. Remote CI must be checked
 for the published commit separately.
 
-## Physical test fleet: preparation pending
+## Physical test fleet: initial PC/laptop execution verified
 
-The intended fleet is the Windows PC, Windows laptop, and M3 MacBook Air. The user
-reported installing Ubuntu on the laptop. On November 4 the PC's WSL inventory
-also listed Ubuntu (stopped) alongside docker-desktop; native Ubuntu build/network
-setup and physical-machine execution have not been verified.
+The intended fleet is the Windows PC, Windows laptop, and M3 MacBook Air. On
+November 5 both x86_64 Windows machines built Forge in Ubuntu WSL2 and passed
+sixteen local suites (the laptop output was supplied by the user). The PC's
+fresh native suite took 111.92 seconds and the laptop's 115.54 seconds; these
+are correctness-test durations, not benchmark comparisons.
+
+Two concurrent staged jobs succeeded on distinct PC/laptop workers, with input
+hashes, unique input values, worker IDs and attempt history checked. The laptop
+also submitted a hostname command executed by the PC. Transport was Forge mutual
+TLS inside a key-authenticated SSH tunnel, not direct LAN TLS. See the
+[raw correctness evidence and limitations](validation/2026-11-05-physical-001/README.md).
+Physical workload performance, recovery-time measurements and onboarding evidence
+remain pending. Neither worker used the optional cgroup backend in that test.
 The Mac needs an ARM64 Linux VM; on November 3 the user deferred that setup and
 asked to continue code development. Bring it up when physical-machine validation
 resumes; it is not a completed test or an automatically scheduled reminder.

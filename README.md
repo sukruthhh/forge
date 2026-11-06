@@ -85,7 +85,9 @@ running development container):
 Stop a worker and inspect the cluster again to see its DEAD record. Connections
 default to `127.0.0.1`. To configure encrypted network endpoints, use the
 [TLS setup and separate-machine checklist](docs/network-setup.md). Network behavior
-has local-process and Docker-bridge tests; physical-machine validation is pending.
+has local-process and Docker-bridge tests. An initial [two-physical-machine test](docs/validation/2026-11-05-physical-001/README.md)
+verified concurrent staged jobs on PC/laptop WSL2 workers over mutual TLS inside
+SSH. Physical scaling and recovery measurements remain pending.
 Workers report registration-time CPU affinity/quota and memory headroom within
 visible cgroup restrictions. CUDA detection remains unavailable.
 

@@ -1,0 +1,62 @@
+{
+  "started_utc": "2026-11-05T17:02:48.846089+00:00",
+  "source_commit": "c5ba40197cf10e6f0cb85508255877320c57abec",
+  "pc_binary_sha256": "6aa17a83a6b8d741bd7c873bd88259fd5864126f9c7076d61a66aed8bb343eac",
+  "transport": "Forge mutual TLS over laptop-initiated restricted SSH tunnel",
+  "scope": "Two physical Windows hosts, native Ubuntu WSL2 workers; correctness only",
+  "passed": true,
+  "tasks": [
+    {
+      "returncode": 0,
+      "stdout": "{\"hostname\": \"SukruthPC\", \"architecture\": \"x86_64\", \"input_sha256\": \"378b515b92bf55f0ec330da371caeb18697cfa9cea8b83eb256b802ec5bf78e8\", \"nonce\": \"d674d79ff7214b0a90a28d0e031e87fb\", \"cwd\": \"/tmp/forge-job-R8ezwc\"}\n",
+      "stderr": "[forge] job-3 exit=0\n",
+      "elapsed_seconds": 3.2333820029998606,
+      "index": 1,
+      "expected_nonce": "d674d79ff7214b0a90a28d0e031e87fb",
+      "expected_input_sha256": "378b515b92bf55f0ec330da371caeb18697cfa9cea8b83eb256b802ec5bf78e8",
+      "job_id": "job-3",
+      "worker_id": "laptop-native",
+      "attempts": {
+        "returncode": 0,
+        "stdout": "ATTEMPT\tWORKER\tSTATE\tEXIT\tELAPSED_SECONDS\tDIAGNOSTIC\n1\tlaptop-native\tSUCCEEDED\t0\t3.225638\t\n",
+        "stderr": "[forge] job-3 state=SUCCEEDED attempts=1/1\n",
+        "elapsed_seconds": 0.006694918999528454
+      }
+    },
+    {
+      "returncode": 0,
+      "stdout": "{\"hostname\": \"SukruthsPC\", \"architecture\": \"x86_64\", \"input_sha256\": \"4616a5528c7d32ad6d792c219705d7fc15b591c27e046d2b350ec28741ca7aaf\", \"nonce\": \"43b6158c3671482282b56e5600cf835e\", \"cwd\": \"/tmp/forge-job-tEApF4\"}\n",
+      "stderr": "[forge] job-2 exit=0\n",
+      "elapsed_seconds": 3.0317391349999525,
+      "index": 2,
+      "expected_nonce": "43b6158c3671482282b56e5600cf835e",
+      "expected_input_sha256": "4616a5528c7d32ad6d792c219705d7fc15b591c27e046d2b350ec28741ca7aaf",
+      "job_id": "job-2",
+      "worker_id": "desktop-native",
+      "attempts": {
+        "returncode": 0,
+        "stdout": "ATTEMPT\tWORKER\tSTATE\tEXIT\tELAPSED_SECONDS\tDIAGNOSTIC\n1\tdesktop-native\tSUCCEEDED\t0\t3.024122\t\n",
+        "stderr": "[forge] job-2 state=SUCCEEDED attempts=1/1\n",
+        "elapsed_seconds": 0.006301303999862284
+      }
+    }
+  ],
+  "cluster_before": {
+    "returncode": 0,
+    "stdout": "ID\tOS\tARCH\tCPU\tRAM_BYTES\tCUDA\tSTATE\tSTAGING\tATTEMPTS\tLIMITS\ndesktop-native\tlinux\tx86_64\t28\t15524569088\t0\tREADY\tstaging-v1\tattempt-v1\t\nlaptop-native\tlinux\tx86_64\t8\t7186182144\t0\tREADY\tstaging-v1\tattempt-v1\t\n",
+    "stderr": "",
+    "elapsed_seconds": 0.006960159999835014
+  },
+  "ps": {
+    "returncode": 0,
+    "stdout": "ID\tSTATE\tWORKER\tEXIT\tCOMMAND\njob-1\tSUCCEEDED\tdesktop-native\t0\t/bin/hostname\njob-2\tSUCCEEDED\tdesktop-native\t0\tpython3 physical_probe.py input-2.json\njob-3\tSUCCEEDED\tlaptop-native\t0\tpython3 physical_probe.py input-1.json\n",
+    "stderr": "",
+    "elapsed_seconds": 0.007434139999531908
+  },
+  "cluster_after": {
+    "returncode": 0,
+    "stdout": "ID\tOS\tARCH\tCPU\tRAM_BYTES\tCUDA\tSTATE\tSTAGING\tATTEMPTS\tLIMITS\ndesktop-native\tlinux\tx86_64\t28\t15524569088\t0\tREADY\tstaging-v1\tattempt-v1\t\nlaptop-native\tlinux\tx86_64\t8\t7186182144\t0\tREADY\tstaging-v1\tattempt-v1\t\n",
+    "stderr": "",
+    "elapsed_seconds": 0.006229567000445968
+  }
+}
