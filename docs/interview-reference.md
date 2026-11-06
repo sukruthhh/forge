@@ -939,3 +939,18 @@ Cancellation rotates stop requests so one slow cleanup cannot starve siblings.
 The benchmark harness now distinguishes physical worker identities from execution
 slots and compares against the matching direct-parallel baseline. Further speedup
 or physical scaling claims require a recorded experiment for this revision.
+
+The [recorded one-host experiment](../benchmarks/results/2026-11-06-concurrency-001/README.md)
+now measures 50.12% lower median eight-task batch time (2.9427 to 1.4679 seconds)
+for two slots versus one on the same final binary. Throughput increased from
+2.7343 to 5.4289 tasks/s. Forge remained 4.16% slower than direct two-process
+execution by batch time. Five measured rounds plus a warmup per profile validated 192 results
+against the numerical oracle. Per-task p95 did not improve; this is batch
+throughput/completion evidence, not a 50% reduction in every task's latency.
+
+The retained first experiment improved only 16.25%. Its phase records exposed
+active-heartbeat delays despite available slots, motivating the bounded 25-ms
+pending-request refinement. Both complete experiments remain published. Their
+cross-invocation comparison is descriptive, while the final one-/two-slot result
+comes from interleaved trials within one invocation. No external user outcome,
+new cross-machine scaling or production-reliability claim follows.

@@ -234,3 +234,9 @@ binary, `--comparison-slots 1`. Both can use the same binary to isolate the slot
 setting. Worker counts remain process identities; map concurrency and matching
 direct-parallel baselines use worker count times slot count. Both values are
 retained in provenance. See [worker concurrency](../docs/worker-concurrency.md).
+
+The [controlled concurrency experiment](results/2026-11-06-concurrency-001/README.md)
+measured 50.12% lower median eight-task batch time (2.9427 to 1.4679 seconds)
+with two slots versus one on the same binary and one PC. Direct parallel execution
+remained faster at 1.4093 seconds. All 192 final executions validated, with the
+192-execution earlier experiment also retained. This is not physical scaling.

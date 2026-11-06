@@ -106,6 +106,15 @@ and Debug suites passed; the private TLS fixture passed. Real-kernel concurrent
 cgroup tests verify one job's OOM does not terminate its sibling. These establish
 correctness, not a performance improvement. See [worker concurrency](worker-concurrency.md).
 
+The subsequent [controlled concurrency experiment](../benchmarks/results/2026-11-06-concurrency-001/README.md)
+measured a 50.12% median eight-task reduction (2.9427 to 1.4679 seconds) with two
+slots versus one on the same binary and one PC. Throughput increased from 2.7343
+to 5.4289 tasks/s; direct parallel execution remained faster at 1.4093 seconds.
+All 192 executions in the final experiment validated. The earlier 16.25%
+improvement experiment is also retained, for 384 executions across both complete
+experiments. These include direct baselines and warmups, not 384 distributed jobs.
+This is generated numerical-model evidence, not a new physical-cluster result.
+
 The intended fleet is the Windows PC, Windows laptop, and M3 MacBook Air. On
 November 5 both x86_64 Windows machines built Forge in Ubuntu WSL2 and passed
 sixteen local suites (the laptop output was supplied by the user). The PC's
