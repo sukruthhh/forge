@@ -79,8 +79,8 @@ motivation in your own words rather than presenting this document as a script.
 | Namespace isolation | Planned |
 | Native macOS workers and CUDA placement | Planned; current matching only checks a supplied CUDA boolean |
 | Physical-machine benchmarks | Initial PC/laptop synthetic benchmark published; 4.5552-s batch versus PC sequential 5.4479 s and parallel 2.7181 s; representative workload and recovery measurements remain open |
-| External users | No adoption or independent onboarding evidence yet |
-| Numerical workload | Bounded oscillator RK4 parameter sweep with analytic correctness checks; generated scientific example, not customer validation |
+| External users | No adoption or independent onboarding evidence; project-owner assisted setup observations are documented separately |
+| Numerical workload | Oscillator RK4 sweep with analytic checks; 240 executions validated in completed comparisons, cluster 2.0458 s versus PC sequential 2.8041 s and parallel 1.3767 s; generated model, not customer validation |
 | Initial physical-machine execution | Two staged jobs succeeded on distinct PC/laptop Ubuntu WSL2 workers; mutual TLS inside SSH, verified input hashes and accepted attempt history |
 | Physical-host worker-process crash recovery | Five PC worker SIGKILL trials completed on the laptop on attempt 2; inspection includes polling delay, workload sleeps eight seconds, old-child cleanup performed by fixture |
 

@@ -132,6 +132,16 @@ parameter sweep, using RK4 with an independent analytic position/velocity oracle
 See [simulation workload](../benchmarks/simulation-workload.md). This is a generated
 scientific-model example, not a validated customer workload; implementation and
 correctness tests alone establish no performance result.
+
+The [November 6 simulation experiment](../benchmarks/results/2026-11-06-simulation-001/README.md)
+now validates 240 executions across completed physical and PC-only comparisons.
+Eight-task physical median was 2.0458 seconds, versus direct PC sequential 2.8041
+and parallel 1.3767 seconds. The separate PC-only Forge reference was 2.6924 seconds.
+The local-parallel baseline still won. An earlier unavailable-fleet invocation
+remains invalid with its raw observations retained. The laptop worker had exited
+on an I/O deadline and required manual restart; the underlying stall cause was
+not isolated. [Assisted setup observations](onboarding-observations.md) capture
+this and other friction without claiming independent user research or time savings.
 The Mac needs an ARM64 Linux VM; on November 3 the user deferred that setup and
 asked to continue code development. Bring it up when physical-machine validation
 resumes; it is not a completed test or an automatically scheduled reminder.

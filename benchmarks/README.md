@@ -221,3 +221,10 @@ with two direct PC processes. A separate one-PC-worker reference was 5.3034
 seconds. All 240 executions across both invocations validated; the stronger
 local-parallel baseline outperformed the cluster. This remains synthetic work,
 with heterogeneous hardware/Python versions and uncontrolled host load.
+
+The [numerical parameter-sweep experiment](results/2026-11-06-simulation-001/README.md)
+validates 240 executions in completed comparisons using RK4 and an analytic oracle.
+Physical median batch time was 2.0458 seconds versus PC sequential 2.8041 and
+parallel 1.3767 seconds. The earlier unavailable-fleet run remains invalid and is
+retained alongside the successful experiments. This is a generated scientific
+model example, not a validated customer workload or an industrial solver benchmark.
