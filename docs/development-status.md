@@ -126,6 +126,12 @@ eight-second replacement workload. These are not heartbeat-silence, physical pow
 network-partition or general application recovery measurements. Orphan cleanup was
 performed explicitly by the fixture, not guaranteed by Forge. Both fixture preflight
 failures before fault injection are retained alongside the five successful crash trials.
+
+The benchmark harness now also supports a bounded damped-oscillator numerical
+parameter sweep, using RK4 with an independent analytic position/velocity oracle.
+See [simulation workload](../benchmarks/simulation-workload.md). This is a generated
+scientific-model example, not a validated customer workload; implementation and
+correctness tests alone establish no performance result.
 The Mac needs an ARM64 Linux VM; on November 3 the user deferred that setup and
 asked to continue code development. Bring it up when physical-machine validation
 resumes; it is not a completed test or an automatically scheduled reminder.

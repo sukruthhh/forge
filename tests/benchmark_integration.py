@@ -3,6 +3,7 @@ import base64
 import copy
 import importlib.util
 import json
+import math
 from pathlib import Path
 import subprocess
 import sys
@@ -11,6 +12,7 @@ import tempfile
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root / "benchmarks"))
 import workload
+import oscillator
 
 spec = importlib.util.spec_from_file_location("benchmark", root / "benchmarks/run.py")
 benchmark = importlib.util.module_from_spec(spec)
@@ -32,10 +34,57 @@ def invoke(output, *arguments):
 known = {0: 0, 1: 0, 2: 1, 3: 2, 10: 4, 100: 25, 1000: 168, 7919: 1000, 10000: 1229}
 require(workload.reference_counts(list(known)) == known, "sieve oracle fails known answers")
 require(all(workload.count_primes(limit) == expected for limit, expected in known.items()), "CPU kernel fails known answers")
+undamped = dict(oscillator.make_task(0, 10000), damping=0, duration=math.pi / 2)
+reference = oscillator.reference(undamped)
+require(abs(reference['position']) < 1e-14 and abs(reference['velocity'] + 1) < 1e-14,
+        'analytic oscillator oracle fails the quarter-period known answer')
+oscillator.check_result(undamped, dict(undamped, **oscillator.solve(undamped)), reference)
+for omega in (.25, 5):
+    for damping in (0, .9):
+        for duration in (1, 20):
+            edge = dict(undamped, omega=omega, damping=damping, duration=duration)
+            oscillator.check_result(edge, dict(edge, **oscillator.solve(edge)), oscillator.reference(edge))
+for index in range(64):
+    task = oscillator.make_task(index, 10000)
+    answer = oscillator.solve(task)
+    oscillator.check_result(task, dict(task, **answer), oscillator.reference(task))
+    require(answer['velocity'] ** 2 + task['omega'] ** 2 * answer['position'] ** 2 < task['omega'] ** 2,
+            'damped oscillator increased total mechanical energy')
+for key, value in [('steps', 0), ('steps', True), ('omega', float('nan')), ('damping', 1), ('duration', 0)]:
+    invalid = dict(undamped, **{key: value})
+    try:
+        oscillator.solve(invalid)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('invalid oscillator input accepted')
 require(benchmark.percentile([1, 2, 3, 4], .5) == 2 and benchmark.percentile([1, 2, 3, 4], .95) == 4,
         "percentile method does not match nearest-rank contract")
 
 with tempfile.TemporaryDirectory() as temporary:
+    simulations = Path(temporary) / 'simulations'
+    result = invoke(simulations, '--workload', 'oscillator', '--steps', '10000', '--workers', '1', '2',
+                    '--tasks', '2', '--repetitions', '1', '--warmups', '0', '--timeout', '5', '--collect-phases')
+    require(result.returncode == 0, result.stdout + result.stderr)
+    simulation_metadata = json.loads((simulations / 'metadata.json').read_text())
+    simulation_summary = json.loads((simulations / 'summary.json').read_text())
+    require(simulation_summary['valid'] and simulation_metadata['correctness_oracle']['absolute_tolerance'] == 1e-7,
+            'oscillator benchmark omitted correctness policy or failed')
+    simulation_trials = [json.loads(line) for line in (simulations / 'trials.jsonl').read_text().splitlines()]
+    require(len(simulation_trials) == 4, 'oscillator profiles omitted')
+    good_simulation = simulation_trials[0]['tasks'][0]
+    task = {key: good_simulation[key] for key in ('workload', 'task', *oscillator.PARAMETERS)}
+    for key, value in [('position', good_simulation['observed']['position'] + .01),
+                       ('velocity', float('inf')), ('steps', 10001), ('omega', 4.0)]:
+        wrong = dict(good_simulation['observed'], **{key: value})
+        rejected = benchmark.observe(task, json.dumps(wrong).encode(), b'', 0, .1, False,
+                                     good_simulation['expected_result'], simulation_metadata['workload_sha256'])
+        require(not rejected['valid'], 'wrong oscillator answer or task parameters accepted')
+    for options in (('--workload', 'oscillator', '--steps', '0'),
+                    ('--workload', 'oscillator', '--limit', '1000'), ('--steps', '10000')):
+        invalid_output = Path(temporary) / 'invalid-simulation'
+        require(invoke(invalid_output, *options).returncode == 2 and not invalid_output.exists(),
+                'invalid workload options accepted or created benchmark output')
     output = Path(temporary) / "successful"
     result = invoke(output, "--workers", "1", "2", "--tasks", "2", "--limit", "1000", "--step", "100",
                     "--repetitions", "2", "--warmups", "1", "--timeout", "5", "--collect-phases",

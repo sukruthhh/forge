@@ -1,7 +1,7 @@
 # Reproducible benchmark harness
 
-This harness measures correctness-checked synthetic CPU batches. It does not
-establish performance on a real application, physical-machine scaling, scheduler
+This harness measures correctness-checked prime-counting or numerical-simulation
+batches. It does not by itself establish performance on a real application, physical-machine scaling, scheduler
 dispatch latency, recovery time, or worker utilization. Negative results and
 failures are retained. CI verifies the harness, not a minimum speedup.
 
@@ -48,6 +48,12 @@ the direct baseline and Forge have different metadata serializers, so this is a
 practical end-to-end comparison, not an isolated scheduler microbenchmark.
 
 ## Workload and correctness
+
+Prime counting is the default. --workload oscillator --steps N selects an
+independent damped-oscillator RK4 parameter sweep with an analytic oracle. See
+[simulation workload](simulation-workload.md) for its model, bounded accuracy,
+staging, tests and interpretation limits. The following prime-specific bounds
+and oracle apply to the default mode.
 
 Each task counts primes from zero through a configured limit using integer trial
 division. It is deterministic synthetic CPU work, not a proposed efficient prime

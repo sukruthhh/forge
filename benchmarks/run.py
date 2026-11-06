@@ -21,6 +21,7 @@ import tempfile
 import time
 
 from workload import MAX_LIMIT, reference_counts
+import oscillator
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKLOAD = Path(__file__).with_name("workload.py")
@@ -107,23 +108,28 @@ def reject_constant(value):
 
 
 def observe(task, stdout, stderr, exit_code, latency, timed_out, expected, workload_hash):
-    row = {"task": task["task"], "limit": task["limit"], "exit_code": exit_code if type(exit_code) is int else None,
+    row = {**task, "exit_code": exit_code if type(exit_code) is int else None,
            "latency_seconds": latency if number(latency) else None, "timed_out": timed_out if type(timed_out) is bool else None,
            "stdout_base64": base64.b64encode(stdout).decode(), "stderr_base64": base64.b64encode(stderr).decode(),
-           "expected_prime_count": expected, "valid": False, "observed": None, "diagnostic": ""}
+           "valid": False, "observed": None, "diagnostic": ""}
+    row["expected_result" if task.get("workload") == "oscillator" else "expected_prime_count"] = expected
     try:
         value = json.loads(stdout, parse_float=finite_float, parse_constant=reject_constant)
         row["observed"] = value
         if type(exit_code) is not int or exit_code != 0 or type(timed_out) is not bool or timed_out or not number(latency, positive=True):
             raise ValueError("command failure, timeout, or invalid latency")
         if (type(value) is not dict or type(value.get("schema")) is not int or value["schema"] != 1 or
-            type(value.get("task")) is not int or type(value.get("limit")) is not int or value.get("task") != task["task"] or
-            value.get("limit") != task["limit"] or type(value.get("prime_count")) is not int or
-            value["prime_count"] != expected or value.get("workload_sha256") != workload_hash or
+            type(value.get("task")) is not int or value.get("task") != task["task"] or
+            value.get("workload_sha256") != workload_hash or
             not number(value.get("compute_seconds")) or not number(value.get("cpu_seconds")) or
             type(value.get("worker_pid")) is not int or value["worker_pid"] <= 0 or
             not all(isinstance(value.get(key), str) and value[key] for key in ("host", "architecture", "python"))):
             raise ValueError("wrong answer, task identity, workload hash, or workload telemetry")
+        if task.get("workload") == "oscillator":
+            oscillator.check_result(task, value, expected)
+        elif (type(value.get("limit")) is not int or value["limit"] != task["limit"]
+              or type(value.get("prime_count")) is not int or value["prime_count"] != expected):
+            raise ValueError("wrong prime count or limit")
         row["valid"] = True
     except (ValueError, TypeError, KeyError) as error:
         row["diagnostic"] = str(error)
@@ -139,6 +145,10 @@ def execute_local(path, timeout):
         return error.stdout or b"", error.stderr or b"", None, time.perf_counter() - started, True
     except OSError as error:
         return b"", str(error).encode(), None, time.perf_counter() - started, False
+
+
+def expected_result(task, expected):
+    return expected[task["task"] if task.get("workload") == "oscillator" else task["limit"]]
 
 
 def json_text(value):
@@ -160,7 +170,7 @@ def local_trial(directory, tasks, paths, jobs, timeout, expected, workload_hash)
         captures = list(pool.map(run, range(len(tasks))))
     (directory / "results.jsonl").write_text("".join(json_text(metadata) for metadata, _ in captures))
     elapsed = time.perf_counter() - started
-    rows = [observe(task, *capture, expected[task["limit"]], workload_hash)
+    rows = [observe(task, *capture, expected_result(task, expected), workload_hash)
             for task, (_, capture) in zip(tasks, captures)]
     return elapsed, rows
 
@@ -247,7 +257,7 @@ def forge_trial(args, directory, tasks, paths, jobs, host, port, environment, ex
     result_directory = directory / "map-results"
     command = forge_command(args, host, port, "map", "--arch", "any", "--jobs", str(jobs),
                             "--timeout", str(args.timeout), "--file", str(WORKLOAD), "--output", str(result_directory),
-                            *map(str, paths), "--", args.worker_python or ("python3" if args.host else sys.executable), "workload.py", "{}")
+                            *map(str, paths), "--", args.worker_python or ("python3" if args.host else sys.executable), WORKLOAD.name, "{}")
     started = time.perf_counter()
     try:
         result = subprocess.run(command, env=environment, capture_output=True, timeout=len(tasks) * 45 + 15)
@@ -267,7 +277,7 @@ def forge_trial(args, directory, tasks, paths, jobs, host, port, environment, ex
             item.get("stdout") != stem + ".stdout" or item.get("stderr") != stem + ".stderr"):
             raise RuntimeError("map manifest input order or artifact association changed")
         row = observe(task, (result_directory / item["stdout"]).read_bytes(), (result_directory / item["stderr"]).read_bytes(),
-                      item.get("exit_code"), item.get("elapsed_seconds"), item.get("timed_out"), expected[task["limit"]], workload_hash)
+                      item.get("exit_code"), item.get("elapsed_seconds"), item.get("timed_out"), expected_result(task, expected), workload_hash)
         row.update(job_id=item.get("job_id"), map_state=item.get("state"))
         if item.get("state") != "SUCCEEDED" or item.get("storage_complete") is not True or item.get("truncated") is not False:
             row.update(valid=False, diagnostic="map task failed, truncated output, or incomplete storage")
@@ -360,8 +370,10 @@ def parse_args():
     parser.add_argument("--purpose", choices=("smoke", "measurement"), default="measurement")
     parser.add_argument("--workers", type=int, nargs="+", default=[1, 2])
     parser.add_argument("--tasks", type=int, default=8)
-    parser.add_argument("--limit", type=int, default=500000)
-    parser.add_argument("--step", type=int, default=10000)
+    parser.add_argument("--workload", choices=("primes", "oscillator"), default="primes")
+    parser.add_argument("--steps", type=int, help="RK4 steps per oscillator simulation (default 1000000)")
+    parser.add_argument("--limit", type=int)
+    parser.add_argument("--step", type=int)
     parser.add_argument("--repetitions", type=int, default=5)
     parser.add_argument("--warmups", type=int, default=1)
     parser.add_argument("--timeout", type=int, default=30)
@@ -372,6 +384,17 @@ def parse_args():
     parser.add_argument("--cluster-kind", choices=("local-processes", "same-host-containers", "physical-machines", "unspecified"), default="unspecified")
     parser.add_argument("--worker-python", help="interpreter available on all workers; defaults to this interpreter locally, python3 externally")
     args = parser.parse_args()
+    if args.steps is not None and args.workload != "oscillator":
+        parser.error("--steps requires --workload oscillator")
+    if args.workload == "oscillator":
+        if args.limit is not None or args.step is not None:
+            parser.error("--limit and --step apply only to the primes workload")
+        args.steps = args.steps if args.steps is not None else 1000000
+        if not oscillator.MIN_STEPS <= args.steps <= oscillator.MAX_STEPS:
+            parser.error("oscillator --steps must be between 10000 and 2000000")
+    else:
+        args.limit = args.limit if args.limit is not None else 500000
+        args.step = args.step if args.step is not None else 10000
     args.binary, args.output = args.binary.resolve(), args.output.resolve()
     if args.compare_binary:
         args.compare_binary = args.compare_binary.resolve()
@@ -384,8 +407,9 @@ def parse_args():
     if not args.binary.is_file() or args.output.exists():
         parser.error("binary must exist and output directory must be new")
     if (not args.workers or len(set(args.workers)) != len(args.workers) or any(not 1 <= n <= 16 for n in args.workers)
-        or not max(args.workers) <= args.tasks <= 64 or args.limit < 0 or args.step < 0
-        or args.limit + (args.tasks - 1) * args.step > MAX_LIMIT or not 1 <= args.repetitions <= 30
+        or not max(args.workers) <= args.tasks <= 64
+        or (args.workload == "primes" and (args.limit < 0 or args.step < 0
+            or args.limit + (args.tasks - 1) * args.step > MAX_LIMIT)) or not 1 <= args.repetitions <= 30
         or not 0 <= args.warmups <= 5 or not 1 <= args.timeout <= 30 or not 1 <= args.port <= 65535):
         parser.error("invalid worker/task/workload/repetition/timeout bounds")
     if args.host and (len(args.workers) != 1 or args.cluster_kind == "unspecified"):
@@ -398,8 +422,15 @@ def parse_args():
 
 
 def main():
+    global WORKLOAD
     args = parse_args()
+    if args.workload == "oscillator":
+        WORKLOAD = Path(__file__).with_name("oscillator.py")
     metadata = provenance(args)
+    metadata["correctness_oracle"] = ({"kind": "analytic underdamped oscillator solution",
+        "absolute_tolerance": oscillator.TOLERANCE, "relative_tolerance": oscillator.TOLERANCE,
+        "initial_position": 1.0, "initial_velocity": 0.0} if args.workload == "oscillator"
+        else {"kind": "independent integer sieve", "exact": True})
     if args.compare_binary:
         previous = copy.copy(args)
         previous.binary = args.compare_binary
@@ -411,8 +442,12 @@ def main():
     (args.output / "metadata.json").write_text(json_text(metadata))
     input_directory = args.output / "inputs"
     input_directory.mkdir()
-    tasks = [{"task": index, "limit": args.limit + index * args.step} for index in range(args.tasks)]
-    expected = reference_counts([task["limit"] for task in tasks])
+    if args.workload == "oscillator":
+        tasks = [oscillator.make_task(index, args.steps) for index in range(args.tasks)]
+        expected = {task["task"]: oscillator.reference(task) for task in tasks}
+    else:
+        tasks = [{"task": index, "limit": args.limit + index * args.step} for index in range(args.tasks)]
+        expected = reference_counts([task["limit"] for task in tasks])
     paths = [input_directory / f"task-{task['task']:04}.json" for task in tasks]
     for task, path in zip(tasks, paths):
         path.write_text(json_text(task))
@@ -477,7 +512,9 @@ def main():
         except KeyboardInterrupt:
             interrupted = True
     summary = summarize(trials, configurations, args.repetitions, args.warmups)
-    summary.update(interrupted=interrupted, workload="synthetic trial-division prime counting; independent sieve oracle", label=args.label)
+    description = ("damped-oscillator RK4 parameter sweep; analytic position/velocity oracle; generated model inputs"
+                   if args.workload == "oscillator" else "synthetic trial-division prime counting; independent sieve oracle")
+    summary.update(interrupted=interrupted, workload=description, label=args.label)
     (args.output / "summary.json").write_text(json_text(summary))
     print(json.dumps(summary, indent=2, sort_keys=True, allow_nan=False))
     return 130 if interrupted else 0 if summary["valid"] else 1
