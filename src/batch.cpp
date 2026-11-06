@@ -96,11 +96,11 @@ int map(std::uint16_t port, const std::string& host, const TaskRequest& base,
         validate_task(entry.task);
         entries.push_back(std::move(entry));
     }
-    const auto workers = staging_worker_count(port, host, base);
-    if (workers == 0) throw std::runtime_error(base.enforce_limits ? "no compatible idle READY workers advertise cgroup2-v1 enforcement" : base.retries == 0 ?
-        "no compatible idle READY workers advertise staging-v1" :
-        "no compatible idle READY workers advertise staging-v1 and attempt-v1");
-    concurrency = std::min({concurrency, workers, entries.size()});
+    const auto slots = available_task_slots(port, host, base);
+    if (slots == 0) throw std::runtime_error(base.enforce_limits ? "no compatible available READY workers advertise cgroup2-v1 enforcement" : base.retries == 0 ?
+        "no compatible available READY workers advertise staging-v1" :
+        "no compatible available READY workers advertise staging-v1 and attempt-v1");
+    concurrency = std::min({concurrency, slots, entries.size()});
     if (::mkdir(output.c_str(), 0700) != 0)
         throw std::runtime_error("cannot create output directory; it must not already exist and its parent must exist");
     net::Socket directory(::open(output.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));

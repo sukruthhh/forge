@@ -22,6 +22,7 @@ int main(int argc, char** argv) {
                      "  forge join --id NAME [--port 9000]\n"
                      "  forge cluster [--port 9000]\n"
                      "  forge cluster --details [--port 9000]\n"
+                     "  forge cluster --slots [--port 9000]\n"
                      "  forge ps [--port 9000]\n"
                      "  forge logs JOB [--port 9000]\n\n"
                      "  forge timings JOB [--port 9000]\n\n"
@@ -35,6 +36,7 @@ int main(int argc, char** argv) {
                      "Run/map --retries 0..3: retry worker loss only (default 0); commands can execute more than once.\n"
                      "Join --cgroup-root PATH: use a provisioned cgroup v2 delegation for job limits.\n"
                      "Join --reconnect: retry transport loss with capped backoff; job retries remain separate.\n"
+                     "Join --slots 1..16: maximum concurrent jobs, sharing advertised CPU/RAM (default 1).\n"
                      "Run/map --enforce-limits: require CPU/RAM enforcement and a positive --memory byte limit.\n"
                      "Network options: coordinator --bind IPv4; other commands --host IPv4 (default 127.0.0.1).\n"
                      "Remote endpoints require FORGE_TLS_CA, FORGE_TLS_CERT, FORGE_TLS_KEY (mutual TLS).\n"
@@ -49,9 +51,10 @@ int main(int argc, char** argv) {
     std::string architecture = "native";
     bool architecture_seen = false;
     bool endpoint_seen = false;
-    bool enforce_limits = false, details = false, reconnect = false;
+    bool enforce_limits = false, details = false, reconnect = false, show_slots = false;
     std::string cgroup_root;
-    std::uint32_t cpu = 1, timeout = 30, retries = 0;
+    std::uint32_t cpu = 1, timeout = 30, retries = 0, slots = 1;
+    bool slots_seen = false;
     std::uint64_t memory = 0;
     bool cpu_seen = false, memory_seen = false, timeout_seen = false, retries_seen = false;
     std::vector<std::string> arguments, files, inputs;
@@ -76,6 +79,10 @@ int main(int argc, char** argv) {
         }
         if (command == "cluster" && std::string_view(argv[i]) == "--details" && !details) {
             details = true;
+            continue;
+        }
+        if (command == "cluster" && std::string_view(argv[i]) == "--slots" && !show_slots) {
+            show_slots = true;
             continue;
         }
         if ((command == "run" || command == "map") && std::string_view(argv[i]) == "--") {
@@ -118,6 +125,13 @@ int main(int argc, char** argv) {
                 throw std::runtime_error("map jobs must be between 1 and 16");
             concurrency = parsed;
             concurrency_seen = true;
+        } else if (option == "--slots" && command == "join" && !slots_seen) {
+            unsigned parsed = 0;
+            const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
+            if (error != std::errc{} || end != value.data() + value.size() || parsed == 0 || parsed > 16)
+                throw std::runtime_error("worker slots must be between 1 and 16");
+            slots = parsed;
+            slots_seen = true;
         } else if (option == "--id" && command == "join" && id.empty()) {
             id = value;
         } else if (option == "--cgroup-root" && command == "join" && cgroup_root.empty() && !value.empty()) {
@@ -140,13 +154,13 @@ int main(int argc, char** argv) {
         } else throw std::runtime_error("unknown or repeated option");
     }
     if (command == "coordinator") return forge::coordinator(port, endpoint);
-    if (command == "cluster") return forge::cluster(port, endpoint, details);
+    if (command == "cluster") return forge::cluster(port, endpoint, details, show_slots);
     if (command == "ps") return forge::ps(port, endpoint);
     if (command == "logs") return forge::logs(port, log_id, endpoint);
     if (command == "timings") return forge::timings(port, log_id, endpoint);
     if (command == "attempts") return forge::attempts(port, log_id, endpoint);
     if (command == "cancel") return forge::cancel(port, log_id, endpoint);
-    if (command == "join" && !id.empty()) return forge::join(port, id, endpoint, cgroup_root, reconnect);
+    if (command == "join" && !id.empty()) return forge::join(port, id, endpoint, cgroup_root, reconnect, slots);
     if ((command == "run" || command == "map") && !arguments.empty()) {
         forge::TaskRequest task{cpu, memory, timeout, architecture, arguments, forge::read_inputs(files), retries, enforce_limits};
         if (command == "run") return forge::run(port, endpoint, task);

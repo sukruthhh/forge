@@ -21,7 +21,7 @@ repeated fields:
 ```
 
 Fields are binary-safe at the framing layer. Schema validation applies separately.
-Unknown versions/types (outside 1..40), excess fields, trailing bytes, truncated fields, and
+Unknown versions/types (outside 1..42), excess fields, trailing bytes, truncated fields, and
 out-of-range lengths are errors. Reads/writes handle fragmentation and coalescing.
 Each receive shares one absolute monotonic deadline across header and body;
 receiving a few bytes does not reset it. Sending suppresses SIGPIPE and uses a
@@ -223,6 +223,8 @@ cleanup uncertainty, completion races, partial output and earlier LOST attempts.
 | 38 | LIMITED_STAGED_SUBMIT | CPU, RAM, timeout, OS, architecture, retries 0..3, file count, file triples, argv |
 | 39 | RESOURCE_CAPABILITIES | None; authenticated query used by cluster --details and enforced-map admission |
 | 40 | RESOURCE_SNAPSHOT | Ten-field rows: six registration capabilities, state, staging flag, attempt flag, cgroup flag |
+| 41 | SLOT_CAPABILITIES | None; authenticated slot-aware admission/inspection query |
+| 42 | SLOT_SNAPSHOT | Fourteen-field rows: resource snapshot fields, slot limit, active jobs, reserved CPU, reserved RAM |
 
 Enforced submissions require positive memory bytes and cgroup2-v1 eligibility;
 existing retry 21/22 schemas still require retries 1..3. Configured workers receive
@@ -235,3 +237,9 @@ cleanup failure retires the worker without claiming completed cleanup. Admission
 validates the largest possible assignment header, including resources, before
 allocating a job. Existing cluster/capability snapshots remain unchanged; new
 queries preserve old clients. See [resource-enforcement.md](resource-enforcement.md).
+
+Multi-slot workers append `slots-v1`, then a decimal count in 2..16, after the
+cancel extension and optional cgroup extension. Explicit single-slot extensions
+are also accepted. All assignments and results retain existing job/attempt
+schemas. One worker session can own several jobs with aggregate reservations;
+stale or foreign results retire the session. See [worker-concurrency.md](worker-concurrency.md).

@@ -62,6 +62,23 @@ require(benchmark.percentile([1, 2, 3, 4], .5) == 2 and benchmark.percentile([1,
         "percentile method does not match nearest-rank contract")
 
 with tempfile.TemporaryDirectory() as temporary:
+    concurrent_output = Path(temporary) / 'concurrent'
+    result = invoke(concurrent_output, '--workers', '1', '--worker-slots', '2', '--tasks', '2',
+                    '--limit', '1000', '--step', '100', '--repetitions', '1', '--warmups', '0',
+                    '--compare-binary', binary, '--comparison-source', 'same-binary-one-slot')
+    require(result.returncode == 0, result.stdout + result.stderr)
+    concurrent_summary = json.loads((concurrent_output / 'summary.json').read_text())
+    concurrent_trials = [json.loads(line) for line in (concurrent_output / 'trials.jsonl').read_text().splitlines()]
+    require(concurrent_summary['valid'] and 'local-parallel-2' in concurrent_summary['profiles'],
+            'slot comparison omitted matching parallel baseline')
+    require(abs(concurrent_summary['profiles']['forge-1']['speedup_vs_local_parallel'] -
+                concurrent_summary['profiles']['local-parallel-2']['batch_median_seconds'] /
+                concurrent_summary['profiles']['forge-1']['batch_median_seconds']) < 1e-9,
+            'concurrent worker compared against wrong parallel baseline')
+    for trial in concurrent_trials:
+        if trial['profile'] in ('forge-1', 'comparison-forge-1'):
+            require(trial['worker_slots'] == (2 if trial['profile'] == 'forge-1' else 1), 'slot provenance wrong')
+            require(len(trial['worker_identities']) == 1, 'logical slots counted as physical workers')
     simulations = Path(temporary) / 'simulations'
     result = invoke(simulations, '--workload', 'oscillator', '--steps', '10000', '--workers', '1', '2',
                     '--tasks', '2', '--repetitions', '1', '--warmups', '0', '--timeout', '5', '--collect-phases')

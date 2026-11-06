@@ -227,7 +227,8 @@ def managed_cluster(args, workers, credentials, log_directory):
             if time.monotonic() >= deadline:
                 raise RuntimeError("managed coordinator startup deadline exceeded")
             time.sleep(.05)
-        worker_processes = [start(f"worker-{i}", ["join", "--id", f"bench-{i}"], client_env) for i in range(workers)]
+        slot_options = ["--slots", str(args.worker_slots)] if args.worker_slots != 1 else []
+        worker_processes = [start(f"worker-{i}", ["join", "--id", f"bench-{i}", *slot_options], client_env) for i in range(workers)]
         deadline = time.monotonic() + 8
         while True:
             if any(p.poll() is not None for p in worker_processes):
@@ -303,12 +304,15 @@ PHASES = ("queue_seconds", "dispatch_wait_seconds", "dispatch_write_seconds", "a
           "worker_prepare_seconds", "worker_execute_seconds", "worker_cleanup_seconds", "worker_result_wait_seconds")
 
 
-def profiles(workers, comparison=False):
+def profiles(workers, comparison=False, worker_slots=1, comparison_slots=1):
     result = [{"name": "local-sequential", "kind": "local", "jobs": 1}]
-    result.extend({"name": f"local-parallel-{n}", "kind": "local", "jobs": n} for n in workers if n != 1)
-    result.extend({"name": f"forge-{n}", "kind": "forge", "jobs": n} for n in workers)
+    parallelism = sorted({n * slots for n in workers for slots in
+                          ((worker_slots, comparison_slots) if comparison else (worker_slots,))} - {1})
+    result.extend({"name": f"local-parallel-{n}", "kind": "local", "jobs": n} for n in parallelism)
+    result.extend({"name": f"forge-{n}", "kind": "forge", "jobs": n, "parallel_jobs": n * worker_slots} for n in workers)
     if comparison:
-        result.extend({"name": f"comparison-forge-{n}", "kind": "comparison", "jobs": n} for n in workers)
+        result.extend({"name": f"comparison-forge-{n}", "kind": "comparison", "jobs": n,
+                       "parallel_jobs": n * comparison_slots} for n in workers)
     return result
 
 
@@ -343,7 +347,8 @@ def summarize(trials, configurations, repetitions, warmups):
     baseline = summaries["local-sequential"]
     for profile in configurations:
         report = summaries[profile["name"]]
-        parallel = summaries["local-sequential" if profile["jobs"] == 1 else f"local-parallel-{profile['jobs']}"]
+        parallel_jobs = profile.get('parallel_jobs', profile['jobs'])
+        parallel = summaries["local-sequential" if parallel_jobs == 1 else f"local-parallel-{parallel_jobs}"]
         for label, comparison in (("sequential", baseline), ("local_parallel", parallel)):
             usable = report["valid"] and comparison["valid"]
             report[f"speedup_vs_{label}"] = comparison["batch_median_seconds"] / report["batch_median_seconds"] if usable else None
@@ -369,6 +374,8 @@ def parse_args():
     parser.add_argument("--label", required=True)
     parser.add_argument("--purpose", choices=("smoke", "measurement"), default="measurement")
     parser.add_argument("--workers", type=int, nargs="+", default=[1, 2])
+    parser.add_argument("--worker-slots", type=int, default=1, help="concurrent jobs per managed worker")
+    parser.add_argument("--comparison-slots", type=int, default=1, help="concurrent jobs per comparison worker")
     parser.add_argument("--tasks", type=int, default=8)
     parser.add_argument("--workload", choices=("primes", "oscillator"), default="primes")
     parser.add_argument("--steps", type=int, help="RK4 steps per oscillator simulation (default 1000000)")
@@ -407,6 +414,8 @@ def parse_args():
     if not args.binary.is_file() or args.output.exists():
         parser.error("binary must exist and output directory must be new")
     if (not args.workers or len(set(args.workers)) != len(args.workers) or any(not 1 <= n <= 16 for n in args.workers)
+        or not 1 <= args.worker_slots <= 16 or not 1 <= args.comparison_slots <= 16
+        or max(args.workers) * max(args.worker_slots, args.comparison_slots) > min(16, args.tasks)
         or not max(args.workers) <= args.tasks <= 64
         or (args.workload == "primes" and (args.limit < 0 or args.step < 0
             or args.limit + (args.tasks - 1) * args.step > MAX_LIMIT)) or not 1 <= args.repetitions <= 30
@@ -414,6 +423,10 @@ def parse_args():
         parser.error("invalid worker/task/workload/repetition/timeout bounds")
     if args.host and (len(args.workers) != 1 or args.cluster_kind == "unspecified"):
         parser.error("external mode needs one --workers count and an explicit --cluster-kind declaration")
+    if args.host and args.worker_slots != 1:
+        parser.error("--worker-slots configures managed workers only; external slot attestation is not supported")
+    if not args.compare_binary and args.comparison_slots != 1:
+        parser.error("--comparison-slots requires --compare-binary")
     if args.host:
         tls = [os.environ.get(key) for key in ("FORGE_TLS_CA", "FORGE_TLS_CERT", "FORGE_TLS_KEY")]
         if (args.transport == "tls" and not all(tls)) or (args.transport == "plaintext" and any(v is not None for v in tls)):
@@ -451,7 +464,7 @@ def main():
     paths = [input_directory / f"task-{task['task']:04}.json" for task in tasks]
     for task, path in zip(tasks, paths):
         path.write_text(json_text(task))
-    configurations = profiles(args.workers, bool(args.compare_binary))
+    configurations = profiles(args.workers, bool(args.compare_binary), args.worker_slots, args.comparison_slots)
     trials = []
     randomizer = random.Random(args.seed)
     workload_hash = digest(WORKLOAD)
@@ -484,9 +497,11 @@ def main():
                             trial_args.comparison_profile = profile["kind"] == "comparison"
                             if trial_args.comparison_profile:
                                 trial_args.binary = args.compare_binary
+                                trial_args.worker_slots = args.comparison_slots
                             trial["binary_sha256"] = digest(trial_args.binary)
+                            trial['worker_slots'] = trial_args.worker_slots
                             def measure(host, port, environment, snapshot, expected_pids):
-                                elapsed, rows, exit_code, command = forge_trial(trial_args, directory, tasks, paths, profile["jobs"], host, port, environment, expected, workload_hash)
+                                elapsed, rows, exit_code, command = forge_trial(trial_args, directory, tasks, paths, profile["jobs"] * trial_args.worker_slots, host, port, environment, expected, workload_hash)
                                 trial.update(batch_seconds=elapsed, tasks=rows, cli_exit_code=exit_code, command=command, cluster_snapshot=snapshot)
                                 identities = {(row["observed"]["host"], row["observed"]["worker_pid"]) for row in rows if row["valid"]}
                                 trial["worker_identities"] = sorted(identities)

@@ -95,11 +95,39 @@ with concurrent.futures.ThreadPoolExecutor() as pool, Cluster() as cluster, temp
         os.chown(jobs, 0, 0)
         os.chown(root / 'cgroup.procs', 0, 0)
         os.chown(manager / 'cgroup.procs', 0, 0)
-    worker = cluster.start('join', '--id', 'enforcer', '--cgroup-root', str(jobs), '--reconnect')
+    worker = cluster.start('join', '--id', 'enforcer', '--cgroup-root', str(jobs), '--reconnect', '--slots', '2')
     wait_for(lambda: b'enforcer\t' in cluster.cli('cluster').stdout, 'enforcing worker did not register')
     row = cluster.cli('cluster', '--details').stdout.decode().splitlines()[1].split('\t')
     require(row[9] == 'cgroup2-v1' and int(row[3]) == 2 and 0 < int(row[4]) <= 512 * 1024 * 1024,
             'worker ignored namespace quotas or failed to advertise enforcement')
+    pending, markers, gates = [], [], []
+    for index in range(2):
+        marker, gate = folder / f'parallel-{index}.json', folder / f'parallel-{index}.go'
+        markers.append(marker)
+        gates.append(gate)
+        script = ('import json,os,pathlib,time\n'
+                  'path=pathlib.Path("/sys/fs/cgroup")/pathlib.Path("/proc/self/cgroup").read_text().strip()[3:].lstrip("/")\n'
+                  f'pathlib.Path({str(marker)!r}).write_text(json.dumps({{"pid":os.getpid(),"path":str(path)}}))\n'
+                  f'while not pathlib.Path({str(gate)!r}).exists(): time.sleep(.01)\n' +
+                  ('data=bytearray(128*1024*1024)\n' if index == 0 else 'print("sibling survived")\n'))
+        pending.append(pool.submit(cluster.cli, 'run', '--enforce-limits', '--memory', str(32 * 1024 * 1024),
+                                   '--timeout', '10', '--', 'python3', '-c', script))
+    wait_for(lambda: all(marker.exists() and marker.stat().st_size for marker in markers), 'enforced tasks did not overlap')
+    records = [json.loads(marker.read_text()) for marker in markers]
+    require(records[0]['path'] != records[1]['path'], 'concurrent jobs shared one cgroup')
+    kind, slots = cluster.request(41)
+    offset = slots.index('enforcer')
+    require(kind == 42 and slots[offset + 11:offset + 14] == ['2', '2', str(64 * 1024 * 1024)],
+            'concurrent enforced reservations incorrect')
+    gates[0].touch()
+    result = pending[0].result(timeout=7)
+    require(result.returncode == 137 and b'cgroup reports an OOM kill' in result.stderr,
+            'parallel OOM not confined to its cgroup')
+    require(not pending[1].done() and not not_running(records[1]['pid']), 'OOM terminated sibling task')
+    gates[1].touch()
+    result = pending[1].result(timeout=7)
+    require(result.returncode == 0 and result.stdout.strip() == b'sibling survived', 'parallel sibling failed')
+    require(all(not Path(record['path']).exists() for record in records), 'parallel cgroup cleanup leaked')
     limited = ('--enforce-limits', '--cpu', '1', '--memory', str(128 * 1024 * 1024), '--timeout', '10')
     script = (
         'import json,pathlib,subprocess\n'

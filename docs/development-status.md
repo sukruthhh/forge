@@ -75,8 +75,9 @@ measurement or secure-isolation claim follows from these checks.
 
 CPU/RAM reservations alone remain accounting. --enforce-limits now requires a
 probed cgroup2-v1 worker and positive memory cap. Discovery accounts for affinity,
-visible quotas and memory headroom at registration. Workers execute one job at a
-time. There is no general dependency packaging, namespace isolation or persistent history.
+visible quotas and memory headroom at registration. Workers default to one job;
+opt-in concurrency is described below. There is no general dependency packaging,
+namespace isolation or persistent history.
 The [cancellation API](cancellation.md) preserves uncertainty after worker loss.
 Worker-loss retries are explicit opt-in; see [recovery.md](recovery.md).
 GPU discovery/execution and a native macOS backend remain future capabilities.
@@ -97,6 +98,13 @@ durations describe test runs, not performance results. Remote CI must be checked
 for the published commit separately.
 
 ## Physical test fleet: initial PC/laptop execution verified
+
+November 6 concurrency milestone: `join --slots 1..16` now permits independent
+jobs under one worker identity and aggregate CPU/RAM reservations. Slot-aware
+map admission and `cluster --slots` expose remaining capacity. Eighteen Release
+and Debug suites passed; the private TLS fixture passed. Real-kernel concurrent
+cgroup tests verify one job's OOM does not terminate its sibling. These establish
+correctness, not a performance improvement. See [worker concurrency](worker-concurrency.md).
 
 The intended fleet is the Windows PC, Windows laptop, and M3 MacBook Air. On
 November 5 both x86_64 Windows machines built Forge in Ubuntu WSL2 and passed

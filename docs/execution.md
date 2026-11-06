@@ -140,7 +140,7 @@ malformed CLI values and repeated --arch options are rejected.
 Use any only when the command, files, interpreters, and dependencies already exist
 and work on every otherwise eligible Linux worker. Forge does not inspect the
 executable, package dependencies, translate machine code, or emulate another
-architecture. OS, resource, liveness, and single-job worker constraints still
+architecture. OS, resource, liveness, and configured worker slot constraints still
 apply. It remains the caller's responsibility to select a valid workload target.
 
 Simulated worker advertisements test heterogeneous placement. Actual process

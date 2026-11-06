@@ -29,8 +29,8 @@ int main() {
     rejects([] { decode({1, 4}); });
     rejects([] { decode({2, 4, 0, 0, 0, 0}); });
     rejects([] { decode({1, 99, 0, 0, 0, 0}); });
-    rejects([] { encode({static_cast<Type>(41), {}}); });
-    rejects([] { decode({1, 41, 0, 0, 0, 0}); });
+    rejects([] { encode({static_cast<Type>(43), {}}); });
+    rejects([] { decode({1, 43, 0, 0, 0, 0}); });
     rejects([] { decode({1, 4, 0, 0, 0, 0, 0}); });
     rejects([] { decode({1, 4, 0, 0, 0, 1, 255, 255, 255, 255}); });
     std::cout << "Protocol checks passed\n";

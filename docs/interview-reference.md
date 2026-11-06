@@ -65,7 +65,7 @@ motivation in your own words rather than presenting this document as a script.
 | Coordinator, worker agents, TCP protocol | Registration, liveness, inspection, submission, assignment, and results; loopback and Docker bridge tests |
 | Automatic capability detection | Linux architecture, visible CPU affinity/quota and memory headroom; registration snapshot, no GPU discovery |
 | Round-robin and least-loaded policies | Planned; only the resource-aware heuristic exists |
-| Worker process execution | Implemented: explicit argv, output/exit capture, runtime/output bounds, one job per worker |
+| Worker process execution | Implemented: explicit argv, output/exit capture, runtime/output bounds, opt-in bounded concurrency |
 | Job inspection and retained logs | Implemented: active jobs plus 64 finalized results in memory, explicit terminal states |
 | File staging and batch map | Up to 16 flat files / 32 KiB per task; client-driven map, up to 256 inputs and 16 in-flight jobs; local-process and TLS container tests |
 | Benchmark tooling | Synthetic CPU oracle, sequential/local-parallel/Forge profiles, repeated raw samples, provenance, failure invalidation; not physical-cluster performance evidence |
@@ -542,7 +542,7 @@ forge run now accepts --arch native (the default), --arch ARCH for an exact
 worker-advertised label, and --arch any for an explicitly portable command.
 Native resolves to the submitting Linux system's uname machine label; any sends
 an empty architecture constraint to the existing placement library. Linux OS,
-resources, liveness, and single-job worker eligibility are still enforced.
+resources, liveness, and configured worker slot eligibility are still enforced.
 Empty/malformed CLI values and repeated options are rejected. Valid labels with
 no matching capacity expire under the existing five-second placement deadline.
 
@@ -915,3 +915,27 @@ job numbering, demonstrating that reconnection is not persistent job history.
 The owner also observed the existing retry loop register after SSH was manually
 restored. One raw readiness interval is diagnostic only, not a resume latency
 claim or reliability rate. See [physical reconnect evidence](validation/2026-11-06-reconnect-001/README.md).
+
+## Bounded worker concurrency (November 6)
+
+The physical experiments showed local parallel execution beating the cluster.
+One-job-per-worker admission was a concrete capacity restriction, though those
+experiments did not isolate every cause of the performance gap. `join --slots`
+now allows up to sixteen independent jobs behind one worker identity and control
+connection. The default stays one. Selection and aggregate CPU/RAM reservation
+remain atomic; releasing one job subtracts only its resources. Slot-aware map
+admission also respects the remaining resource budget. Optional cgroups remain
+per job, and worker-loss retries remain per attempt.
+
+Why not register sixteen workers with the same full host capacity? That would
+multiply advertised resources and allow overcommit. Why not statically split
+resources into slots? A partition would unnecessarily reject larger jobs despite
+sufficient aggregate capacity. Slots are a concurrency ceiling, not resource
+partitions or an enforcement mechanism. No cgroup means accounting only.
+
+Each execution owns its cancellation token and future. Disconnect cancels and
+drains every execution before reconnection; cleanup failure remains fatal.
+Cancellation rotates stop requests so one slow cleanup cannot starve siblings.
+The benchmark harness now distinguishes physical worker identities from execution
+slots and compares against the matching direct-parallel baseline. Further speedup
+or physical scaling claims require a recorded experiment for this revision.

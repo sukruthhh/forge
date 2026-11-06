@@ -42,7 +42,8 @@ enum class Type : std::uint8_t { register_worker = 1, heartbeat = 2, cluster = 3
                                 cancelled_result = 33, cancellation_status = 34,
                                 limited_assignment = 35, limited_staged_assignment = 36,
                                 limited_submit = 37, limited_staged_submit = 38,
-                                resource_capabilities = 39, resource_snapshot = 40 };
+                                resource_capabilities = 39, resource_snapshot = 40,
+                                slot_capabilities = 41, slot_snapshot = 42 };
 struct Message {
     Type type;
     std::vector<std::string> fields;

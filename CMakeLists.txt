@@ -52,6 +52,9 @@ if(BUILD_TESTING)
   add_test(NAME dispatch_integration COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/dispatch_integration.py $<TARGET_FILE:forge>)
   set_tests_properties(dispatch_integration PROPERTIES TIMEOUT 45)
+  add_test(NAME concurrency_integration COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/concurrency_integration.py $<TARGET_FILE:forge>)
+  set_tests_properties(concurrency_integration PROPERTIES TIMEOUT 60)
   add_test(NAME recovery_integration COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/recovery_integration.py $<TARGET_FILE:forge>)
   set_tests_properties(recovery_integration PROPERTIES TIMEOUT 90)

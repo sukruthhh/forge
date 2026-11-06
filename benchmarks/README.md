@@ -228,3 +228,9 @@ Physical median batch time was 2.0458 seconds versus PC sequential 2.8041 and
 parallel 1.3767 seconds. The earlier unavailable-fleet run remains invalid and is
 retained alongside the successful experiments. This is a generated scientific
 model example, not a validated customer workload or an industrial solver benchmark.
+
+Managed experiments can configure `--worker-slots 2` and, with a comparison
+binary, `--comparison-slots 1`. Both can use the same binary to isolate the slot
+setting. Worker counts remain process identities; map concurrency and matching
+direct-parallel baselines use worker count times slot count. Both values are
+retained in provenance. See [worker concurrency](../docs/worker-concurrency.md).

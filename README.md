@@ -70,6 +70,11 @@ docker run --rm -v "${PWD}:/workspace" forge-dev sh -c 'cmake -S . -B build -G N
 This container supplies build tools. It does not validate worker sandboxing or
 physical-machine scaling.
 
+Workers default to one job at a time. `join --slots 2` enables concurrent jobs
+sharing one worker's CPU/RAM admission budget; `cluster --slots` shows active
+reservations. See [worker concurrency](docs/worker-concurrency.md) for limits and
+the distinction between resource accounting and cgroup enforcement.
+
 ## Try the registration milestone
 
 Run these in three terminals in the same Linux environment (or inside the same
