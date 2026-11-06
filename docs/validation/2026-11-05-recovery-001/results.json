@@ -1,0 +1,267 @@
+{
+  "started_utc": "2026-11-06T04:42:18.986502+00:00",
+  "runtime_source": "c5ba40197cf10e6f0cb85508255877320c57abec",
+  "pc_binary_sha256": "6aa17a83a6b8d741bd7c873bd88259fd5864126f9c7076d61a66aed8bb343eac",
+  "fault": "SIGKILL of PC worker process, not physical power loss or a network partition",
+  "transport": "PC loopback TLS; replacement laptop over mutual TLS inside SSH",
+  "observation_boundary": "PC monotonic clock: signal request to first observed LOST inspection / completed submission result; inspection delay included",
+  "workload": "retry-safe staged input hash and nonce; eight-second sleep per attempt; not application recovery latency",
+  "passed": true,
+  "trials": [
+    {
+      "index": 0,
+      "passed": true,
+      "job_id": "job-53",
+      "cancelled_job_id": "job-54",
+      "assignment_rows": [
+        [
+          "job-53",
+          "RUNNING",
+          "desktop-native",
+          "-",
+          "python3 failover_probe.py forge-recovery-measure-gz41454b-trial-0-task-0.json"
+        ],
+        [
+          "job-54",
+          "RUNNING",
+          "laptop-native",
+          "-",
+          "python3 failover_probe.py forge-recovery-measure-gz41454b-trial-0-task-1.json"
+        ]
+      ],
+      "cancel_result": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": "[forge] job-54 CANCELLING cleanup=pending\n"
+      },
+      "cancelled_submission": {
+        "returncode": 130,
+        "stdout": "",
+        "stderr": "[forge] job-54 exit=130\n[forge] CANCELLED cleanup=reported\n"
+      },
+      "signal_call_seconds": 2.436499926261604e-05,
+      "first_loss_snapshot": {
+        "returncode": 0,
+        "stdout": "ATTEMPT\tWORKER\tSTATE\tEXIT\tELAPSED_SECONDS\tDIAGNOSTIC\n1\tdesktop-native\tLOST\t-\t0.574883\tworker session ended before an accepted result; execution outcome unknown\n2\tlaptop-native\tRUNNING\t-\t-\t\n",
+        "stderr": "[forge] job-53 state=RUNNING attempts=2/2\n"
+      },
+      "signal_to_first_loss_observation_seconds": 0.020243521001248155,
+      "old_child_visible_after_loss": true,
+      "signal_to_submission_result_seconds": 8.0629689730049,
+      "result": {
+        "returncode": 0,
+        "stdout": "{\"host\": \"SukruthPC\", \"nonce\": \"a32e6129989e41c686ad1dfa64e6d681\", \"sha256\": \"3577cbdeef32565f1004a928c243ce87572c3aa9c8b36b6b95c57c3b7f4ad0f1\"}\n",
+        "stderr": "[forge] job-53 exit=0\n"
+      },
+      "attempts": {
+        "returncode": 0,
+        "stdout": "ATTEMPT\tWORKER\tSTATE\tEXIT\tELAPSED_SECONDS\tDIAGNOSTIC\n1\tdesktop-native\tLOST\t-\t0.574883\tworker session ended before an accepted result; execution outcome unknown\n2\tlaptop-native\tSUCCEEDED\t0\t8.060379\t\n",
+        "stderr": "[forge] job-53 state=SUCCEEDED attempts=2/2\n"
+      }
+    },
+    {
+      "index": 1,
+      "passed": true,
+      "job_id": "job-55",
+      "cancelled_job_id": "job-56",
+      "assignment_rows": [
+        [
+          "job-55",
+          "RUNNING",
+          "desktop-native",
+          "-",
+          "python3 failover_probe.py forge-recovery-measure-gz41454b-trial-1-task-1.json"
+        ],
+        [
+          "job-56",
+          "RUNNING",
+          "laptop-native",
+          "-",
+          "python3 failover_probe.py forge-recovery-measure-gz41454b-trial-1-task-0.json"
+        ]
+      ],
+      "cancel_result": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": "[forge] job-56 CANCELLING cleanup=pending\n"
+      },
+      "cancelled_submission": {
+        "returncode": 130,
+        "stdout": "",
+        "stderr": "[forge] job-56 exit=130\n[forge] CANCELLED cleanup=reported\n"
+      },
+      "signal_call_seconds": 3.094600106123835e-05,
+      "first_loss_snapshot": {
+        "returncode": 0,
+        "stdout": "ATTEMPT\tWORKER\tSTATE\tEXIT\tELAPSED_SECONDS\tDIAGNOSTIC\n1\tdesktop-native\tLOST\t-\t0.566714\tworker session ended before an accepted result; execution outcome unknown\n2\tlaptop-native\tRUNNING\t-\t-\t\n",
+        "stderr": "[forge] job-55 state=RUNNING attempts=2/2\n"
+      },
+      "signal_to_first_loss_observation_seconds": 0.006649069000559393,
+      "old_child_visible_after_loss": true,
+      "signal_to_submission_result_seconds": 8.10097468800086,
+      "result": {
+        "returncode": 0,
+        "stdout": "{\"host\": \"SukruthPC\", \"nonce\": \"569aac843d5549cc8e544141c9dae8ef\", \"sha256\": \"768c301a0c627100892d43b662d290bc7033aec0111d310d49c9ce32a58ee31a\"}\n",
+        "stderr": "[forge] job-55 exit=0\n"
+      },
+      "attempts": {
+        "returncode": 0,
+        "stdout": "ATTEMPT\tWORKER\tSTATE\tEXIT\tELAPSED_SECONDS\tDIAGNOSTIC\n1\tdesktop-native\tLOST\t-\t0.566714\tworker session ended before an accepted result; execution outcome unknown\n2\tlaptop-native\tSUCCEEDED\t0\t8.098638\t\n",
+        "stderr": "[forge] job-55 state=SUCCEEDED attempts=2/2\n"
+      }
+    },
+    {
+      "index": 2,
+      "passed": true,
+      "job_id": "job-57",
+      "cancelled_job_id": "job-58",
+      "assignment_rows": [
+        [
+          "job-57",
+          "RUNNING",
+          "desktop-native",
+          "-",
+          "python3 failover_probe.py forge-recovery-measure-gz41454b-trial-2-task-1.json"
+        ],
+        [
+          "job-58",
+          "RUNNING",
+          "laptop-native",
+          "-",
+          "python3 failover_probe.py forge-recovery-measure-gz41454b-trial-2-task-0.json"
+        ]
+      ],
+      "cancel_result": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": "[forge] job-58 CANCELLING cleanup=pending\n"
+      },
+      "cancelled_submission": {
+        "returncode": 130,
+        "stdout": "",
+        "stderr": "[forge] job-58 exit=130\n[forge] CANCELLED cleanup=reported\n"
+      },
+      "signal_call_seconds": 2.1204999939072877e-05,
+      "first_loss_snapshot": {
+        "returncode": 0,
+        "stdout": "ATTEMPT\tWORKER\tSTATE\tEXIT\tELAPSED_SECONDS\tDIAGNOSTIC\n1\tdesktop-native\tLOST\t-\t0.585261\tworker session ended before an accepted result; execution outcome unknown\n2\tlaptop-native\tASSIGNED\t-\t-\t\n",
+        "stderr": "[forge] job-57 state=ASSIGNED attempts=2/2\n"
+      },
+      "signal_to_first_loss_observation_seconds": 0.007131459999072831,
+      "old_child_visible_after_loss": true,
+      "signal_to_submission_result_seconds": 8.121327973000007,
+      "result": {
+        "returncode": 0,
+        "stdout": "{\"host\": \"SukruthPC\", \"nonce\": \"ce815e3b3f954badaad82cadd91d1c31\", \"sha256\": \"98a023e79dac6303a59cda930bd3288395dd1dfabad0ce77d598c4be7e64a1a4\"}\n",
+        "stderr": "[forge] job-57 exit=0\n"
+      },
+      "attempts": {
+        "returncode": 0,
+        "stdout": "ATTEMPT\tWORKER\tSTATE\tEXIT\tELAPSED_SECONDS\tDIAGNOSTIC\n1\tdesktop-native\tLOST\t-\t0.585261\tworker session ended before an accepted result; execution outcome unknown\n2\tlaptop-native\tSUCCEEDED\t0\t8.119094\t\n",
+        "stderr": "[forge] job-57 state=SUCCEEDED attempts=2/2\n"
+      }
+    },
+    {
+      "index": 3,
+      "passed": true,
+      "job_id": "job-59",
+      "cancelled_job_id": "job-60",
+      "assignment_rows": [
+        [
+          "job-59",
+          "RUNNING",
+          "desktop-native",
+          "-",
+          "python3 failover_probe.py forge-recovery-measure-gz41454b-trial-3-task-1.json"
+        ],
+        [
+          "job-60",
+          "RUNNING",
+          "laptop-native",
+          "-",
+          "python3 failover_probe.py forge-recovery-measure-gz41454b-trial-3-task-0.json"
+        ]
+      ],
+      "cancel_result": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": "[forge] job-60 CANCELLING cleanup=pending\n"
+      },
+      "cancelled_submission": {
+        "returncode": 130,
+        "stdout": "",
+        "stderr": "[forge] job-60 exit=130\n[forge] CANCELLED cleanup=reported\n"
+      },
+      "signal_call_seconds": 2.4640001356601715e-05,
+      "first_loss_snapshot": {
+        "returncode": 0,
+        "stdout": "ATTEMPT\tWORKER\tSTATE\tEXIT\tELAPSED_SECONDS\tDIAGNOSTIC\n1\tdesktop-native\tLOST\t-\t0.592967\tworker session ended before an accepted result; execution outcome unknown\n2\tlaptop-native\tASSIGNED\t-\t-\t\n",
+        "stderr": "[forge] job-59 state=ASSIGNED attempts=2/2\n"
+      },
+      "signal_to_first_loss_observation_seconds": 0.007351178996032104,
+      "old_child_visible_after_loss": true,
+      "signal_to_submission_result_seconds": 8.11449307899602,
+      "result": {
+        "returncode": 0,
+        "stdout": "{\"host\": \"SukruthPC\", \"nonce\": \"4796d904b2fe424fb6c48f34b28812eb\", \"sha256\": \"c3fe2f90f062a56fffacdfe871baa678229d53241dfa2a644a5131a2f254e9dc\"}\n",
+        "stderr": "[forge] job-59 exit=0\n"
+      },
+      "attempts": {
+        "returncode": 0,
+        "stdout": "ATTEMPT\tWORKER\tSTATE\tEXIT\tELAPSED_SECONDS\tDIAGNOSTIC\n1\tdesktop-native\tLOST\t-\t0.592967\tworker session ended before an accepted result; execution outcome unknown\n2\tlaptop-native\tSUCCEEDED\t0\t8.112124\t\n",
+        "stderr": "[forge] job-59 state=SUCCEEDED attempts=2/2\n"
+      }
+    },
+    {
+      "index": 4,
+      "passed": true,
+      "job_id": "job-61",
+      "cancelled_job_id": "job-62",
+      "assignment_rows": [
+        [
+          "job-61",
+          "RUNNING",
+          "desktop-native",
+          "-",
+          "python3 failover_probe.py forge-recovery-measure-gz41454b-trial-4-task-1.json"
+        ],
+        [
+          "job-62",
+          "RUNNING",
+          "laptop-native",
+          "-",
+          "python3 failover_probe.py forge-recovery-measure-gz41454b-trial-4-task-0.json"
+        ]
+      ],
+      "cancel_result": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": "[forge] job-62 CANCELLING cleanup=pending\n"
+      },
+      "cancelled_submission": {
+        "returncode": 130,
+        "stdout": "",
+        "stderr": "[forge] job-62 exit=130\n[forge] CANCELLED cleanup=reported\n"
+      },
+      "signal_call_seconds": 1.4792000001762062e-05,
+      "first_loss_snapshot": {
+        "returncode": 0,
+        "stdout": "ATTEMPT\tWORKER\tSTATE\tEXIT\tELAPSED_SECONDS\tDIAGNOSTIC\n1\tdesktop-native\tLOST\t-\t0.559946\tworker session ended before an accepted result; execution outcome unknown\n2\tlaptop-native\tRUNNING\t-\t-\t\n",
+        "stderr": "[forge] job-61 state=RUNNING attempts=2/2\n"
+      },
+      "signal_to_first_loss_observation_seconds": 0.006867476004117634,
+      "old_child_visible_after_loss": true,
+      "signal_to_submission_result_seconds": 8.25351308700192,
+      "result": {
+        "returncode": 0,
+        "stdout": "{\"host\": \"SukruthPC\", \"nonce\": \"39ca0f59e8694499928655d4b523f2c7\", \"sha256\": \"766ef643d9d71b265d52e809748271f096702632a4a678a132b39dc699473729\"}\n",
+        "stderr": "[forge] job-61 exit=0\n"
+      },
+      "attempts": {
+        "returncode": 0,
+        "stdout": "ATTEMPT\tWORKER\tSTATE\tEXIT\tELAPSED_SECONDS\tDIAGNOSTIC\n1\tdesktop-native\tLOST\t-\t0.559946\tworker session ended before an accepted result; execution outcome unknown\n2\tlaptop-native\tSUCCEEDED\t0\t8.251145\t\n",
+        "stderr": "[forge] job-61 state=SUCCEEDED attempts=2/2\n"
+      }
+    }
+  ]
+}

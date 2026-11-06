@@ -1,0 +1,44 @@
+{
+  "started_utc": "2026-11-06T04:41:12.792988+00:00",
+  "runtime_source": "c5ba40197cf10e6f0cb85508255877320c57abec",
+  "pc_binary_sha256": "6aa17a83a6b8d741bd7c873bd88259fd5864126f9c7076d61a66aed8bb343eac",
+  "fault": "SIGKILL of PC worker process, not physical power loss or a network partition",
+  "transport": "PC loopback TLS; replacement laptop over mutual TLS inside SSH",
+  "observation_boundary": "PC monotonic clock: signal request to first observed LOST inspection / completed submission result; inspection delay included",
+  "workload": "retry-safe staged input hash and nonce; eight-second sleep per attempt; not application recovery latency",
+  "passed": false,
+  "trials": [
+    {
+      "index": 0,
+      "passed": false,
+      "job_id": "job-49",
+      "cancelled_job_id": "job-50",
+      "assignment_rows": [
+        [
+          "job-49",
+          "RUNNING",
+          "desktop-native",
+          "-",
+          "python3 failover_probe.py trial-0-task-0.json"
+        ],
+        [
+          "job-50",
+          "RUNNING",
+          "laptop-native",
+          "-",
+          "python3 failover_probe.py trial-0-task-1.json"
+        ]
+      ],
+      "cancel_result": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": "[forge] job-50 CANCELLING cleanup=pending\n"
+      },
+      "cancelled_submission": {
+        "returncode": 130,
+        "stdout": "",
+        "stderr": "[forge] job-50 exit=130\n[forge] CANCELLED cleanup=reported\n"
+      }
+    }
+  ]
+}

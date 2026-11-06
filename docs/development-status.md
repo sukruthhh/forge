@@ -114,9 +114,18 @@ now records median eight-task time of 4.5552 seconds across PC/laptop, versus
 5.4479 seconds for direct PC sequential and 2.7181 seconds for direct PC parallel
 execution. A separate PC-only Forge reference took 5.3034 seconds. All 240
 executions across both experiments validated. The cluster was slower than the
-stronger local-parallel baseline. Representative workload performance, recovery-time
-measurements and onboarding evidence remain pending. Neither physical worker used
-the optional cgroup backend in those tests.
+stronger local-parallel baseline. Representative workload performance and onboarding
+evidence remain pending. Neither physical worker used the optional cgroup backend
+in those tests.
+
+Five [controlled PC-worker-process crashes](validation/2026-11-05-recovery-001/README.md)
+then recovered on the laptop with LOST/SUCCEEDED attempt history and verified staged
+input results. Median signal-to-first-observed-LOST was 7.13 ms (includes inspection
+delay); median signal-to-result was 8.1145 seconds, including the probe's deliberate
+eight-second replacement workload. These are not heartbeat-silence, physical power-loss,
+network-partition or general application recovery measurements. Orphan cleanup was
+performed explicitly by the fixture, not guaranteed by Forge. Both fixture preflight
+failures before fault injection are retained alongside the five successful crash trials.
 The Mac needs an ARM64 Linux VM; on November 3 the user deferred that setup and
 asked to continue code development. Bring it up when physical-machine validation
 resumes; it is not a completed test or an automatically scheduled reminder.

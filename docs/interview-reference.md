@@ -33,7 +33,8 @@ programmable compute cluster.
 > across separate containers. Bounded worker-loss retries and cancellation are
 > implemented. Initial staged execution is verified on separate PC/laptop WSL2
 > workers over mutual TLS inside SSH. Synthetic performance is measured;
-> representative workloads and physical recovery measurements remain open.
+> five PC-worker-process crash trials recovered on the laptop. Representative
+> workloads, machine-loss and partition measurements remain open.
 > Bounded file staging and map now distribute independent inputs and save per-task
 > results. Visible affinity/cgroup discovery and delegated CPU/RAM enforcement
 > are implemented; larger packaging and namespace isolation remain open.
@@ -80,6 +81,7 @@ motivation in your own words rather than presenting this document as a script.
 | Physical-machine benchmarks | Initial PC/laptop synthetic benchmark published; 4.5552-s batch versus PC sequential 5.4479 s and parallel 2.7181 s; representative workload and recovery measurements remain open |
 | External users | No adoption or independent onboarding evidence yet |
 | Initial physical-machine execution | Two staged jobs succeeded on distinct PC/laptop Ubuntu WSL2 workers; mutual TLS inside SSH, verified input hashes and accepted attempt history |
+| Physical-host worker-process crash recovery | Five PC worker SIGKILL trials completed on the laptop on attempt 2; inspection includes polling delay, workload sleeps eight seconds, old-child cleanup performed by fixture |
 
 **Validation record, October 31:** GCC 13.3 Linux Debug build succeeded in the
 Ubuntu development container. The initial execution run passed 4/4 CTest suites
